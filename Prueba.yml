@@ -1,8 +1,6 @@
 ---
 - name: Playbook de prueba - Ping a servidores
   hosts: all
-  gather_facts: false
-  become: false
 
   tasks:
     - name: Hacer ping a los hosts
