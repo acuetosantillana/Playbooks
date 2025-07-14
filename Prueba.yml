@@ -1,10 +1,12 @@
 ---
-- name: Prueba sencilla en servidores
+- name: Crear carpeta en /opt
   hosts: all
+  become: true
   gather_facts: false
-  become: false
 
   tasks:
-    - name: Mostrar mensaje de prueba
-      ansible.builtin.debug:
-        msg: "¡Conexión exitosa con Ansible!"
+    - name: Crear el directorio /opt/midirectorio
+      ansible.builtin.file:
+        path: /opt/midirectorio
+        state: directory
+        mode: '0755'
