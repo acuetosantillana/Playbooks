@@ -1,10 +1,10 @@
 ---
-- name: Playbook de prueba - Ping a servidores
+- name: Prueba sencilla en servidores
   hosts: all
   gather_facts: false
   become: false
 
   tasks:
-    - name: Hacer ping a los hosts
-      ansible.builtin.ping:
-
+    - name: Mostrar mensaje de prueba
+      ansible.builtin.debug:
+        msg: "¡Conexión exitosa con Ansible!"
