@@ -1,12 +1,7 @@
 ---
-- name: Crear carpeta en /opt
+- name: Prueba de ping con Ansible
   hosts: all
-  become: true
   gather_facts: false
-
   tasks:
-    - name: Crear el directorio /opt/midirectorio
-      ansible.builtin.file:
-        path: /opt/midirectorio
-        state: directory
-        mode: '0755'
+    - name: Hacer ping a los hosts
+      ansible.builtin.ping:
