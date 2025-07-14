@@ -1,5 +1,5 @@
 - name: Playbook de prueba en AWX
-  hosts: localhost
+  hosts: all
   gather_facts: false
   tasks:
     - name: Mostrar un mensaje de prueba
