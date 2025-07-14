@@ -1,0 +1,7 @@
+- name: Playbook de prueba en AWX
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Mostrar un mensaje de prueba
+      debug:
+        msg: "¡Hola desde el playbook dentro del pod en AWX!"
