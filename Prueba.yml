@@ -1,7 +1,9 @@
-- name: Playbook de prueba en AWX
+- name: Prueba con pausa
   hosts: all
   gather_facts: false
   tasks:
-    - name: Mostrar un mensaje de prueba
-      debug:
-        msg: "¡Hola desde el playbook dentro del pod en AWX!"
+    - name: Esperar 10 segundos
+      pause:
+        seconds: 10
+    - debug:
+        msg: "¡Hola desde AWX!"
