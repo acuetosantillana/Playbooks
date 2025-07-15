@@ -1,0 +1,18 @@
+---
+- name: Actualizar paquetes en servidores Linux
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Actualizar paquetes en sistemas basados en RedHat (RHEL, CentOS, Rocky, Alma)
+      yum:
+        name: "*"
+        state: latest
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Actualizar paquetes en sistemas basados en Debian (Debian, Ubuntu)
+      apt:
+        update_cache: yes
+        upgrade: dist
+      when: ansible_facts['os_family'] == "Debian"
