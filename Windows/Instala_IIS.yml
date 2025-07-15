@@ -1,5 +1,5 @@
 - name: Instalar IIS y crear página web
-  hosts: windows
+  hosts: all
   tasks:
     - name: Instalar el rol Web-Server (IIS)
       win_feature:
