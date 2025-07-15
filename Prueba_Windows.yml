@@ -1,0 +1,5 @@
+- name: Prueba Windows
+  hosts: windows
+  tasks:
+    - name: Win ping
+      win_ping:
