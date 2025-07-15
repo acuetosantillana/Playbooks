@@ -1,0 +1,12 @@
+- name: Instalar IIS y crear página web
+  hosts: windows
+  tasks:
+    - name: Instalar el rol Web-Server (IIS)
+      win_feature:
+        name: Web-Server
+        state: present
+
+    - name: Crear archivo index.html
+      win_copy:
+        dest: C:\inetpub\wwwroot\index.html
+        content: "<h1>¡Servidor administrado por Ansible!</h1>"
