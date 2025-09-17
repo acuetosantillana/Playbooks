@@ -1,5 +1,6 @@
 - name: Prueba Windows
-  hosts: all
+  hosts: windows
+  gather_facts: no
   tasks:
     - name: Win ping
-      win_ping:
+      ansible.windows.win_ping:
