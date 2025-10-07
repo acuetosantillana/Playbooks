@@ -3,7 +3,16 @@
   gather_facts: false
   become: true
   tasks:
-    - name: Usar DNF para instalar el paquete python39
-      ansible.builtin.dnf:
-        name: python39
-        state: present
+    - name: Instalar python39 usando dnf a través del módulo raw
+      raw: dnf install -y python39
+      register: raw_result
+      changed_when: raw_result.stdout is defined and "Complete!" in raw_result.stdout
+
+    - name: Verificar la instalación
+      raw: python3.9 --version
+      register: check_version
+      changed_when: false
+
+    - name: Mostrar la versión instalada
+      debug:
+        var: check_version.stdout
