@@ -1,33 +1,9 @@
-- hosts: linux:!linux_apagado
+# bootstrap_modern_python.yml
+- hosts: linux
   gather_facts: false
   become: true
-  vars:
-    want_py: "3.8"   # mínimo razonable para módulos modernos
   tasks:
-    - name: Detectar pkg manager
-      raw: |
-        if command -v apt-get >/dev/null 2>&1; then echo apt;
-        elif command -v dnf >/dev/null 2>&1; then echo dnf;
-        elif command -v yum >/dev/null 2>&1; then echo yum;
-        elif command -v zypper >/dev/null 2>&1; then echo zypper;
-        else echo unknown; fi
-      register: pkgmgr
-
-    - name: Instalar python3 en Debian/Ubuntu
-      raw: apt-get update -y && apt-get install -y python3 python3-distutils || true
-      when: "'apt' in pkgmgr.stdout"
-
-    - name: Instalar python3 en RHEL/CentOS/Alma/Rocky (dnf)
-      raw: dnf install -y python3 || true
-      when: "'dnf' in pkgmgr.stdout"
-
-    - name: Instalar python3 en RHEL/CentOS 7 (yum)
-      raw: |
-        yum -y install epel-release || true
-        yum -y install python39 || yum -y install python38 || yum -y install python3 || true
-        alternatives --set python3 /usr/bin/python3.9 || true
-      when: "'yum' in pkgmgr.stdout"
-
-    - name: Instalar python3 en SUSE
-      raw: zypper -n install python3 || true
-      when: "'zypper' in pkgmgr.stdout"
+    - name: Usar DNF para instalar el paquete python39
+      ansible.builtin.dnf:
+        name: python39
+        state: present
