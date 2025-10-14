@@ -1,18 +1,117 @@
 ---
-- name: Actualizar paquetes en servidores Linux
+- name: Actualizar kernel y componentes de arranque en Rocky Linux
   hosts: all
-  become: true
-  gather_facts: true
+  become: yes
+  gather_facts: yes
+
+  vars:
+    allow_reboot: true          # Pon en false si no quieres que reinicie automáticamente
+    update_grub: true           # Desactiva si NO quieres regenerar grub.cfg
+    kernel_packages:
+      - kernel
+      - kernel-core
+      - kernel-modules
+      - grub2*
+      - shim*
+
+  pre_tasks:
+    - name: Versión actual del kernel (uname -r)
+      command: uname -r
+      register: current_kernel_cmd
+      changed_when: false
+
+    - name: Listar kernels instalados (entradas en /lib/modules)
+      shell: "ls -1 /lib/modules || true"
+      register: modules_dirs_before
+      changed_when: false
 
   tasks:
-    - name: Actualizar paquetes en sistemas basados en RedHat (RHEL, CentOS, Rocky, Alma)
-      yum:
-        name: "*"
+    - name: Actualizar paquetes del kernel y arranque a latest
+      # En Rocky 8/9 Ansible usa 'dnf' módulo; 'package' también sirve.
+      dnf:
+        name: "{{ kernel_packages }}"
         state: latest
-      when: ansible_facts['os_family'] == "RedHat"
+      register: pkg_update
 
-    - name: Actualizar paquetes en sistemas basados en Debian (Debian, Ubuntu)
-      apt:
-        update_cache: yes
-        upgrade: dist
-      when: ansible_facts['os_family'] == "Debian"
+    - name: Listar kernels instalados tras la actualización
+      shell: "ls -1 /lib/modules || true"
+      register: modules_dirs_after
+      changed_when: false
+
+    - name: Detectar kernel más nuevo disponible localmente
+      set_fact:
+        newest_kernel_installed: "{{ (modules_dirs_after.stdout_lines | sort(attribute='split', reverse=false) | sort | list) | last }}"
+      vars:
+        # sort -V equivalente: convertimos a lista y dejamos que sort de Jinja haga su trabajo básico.
+        # Para versiones con sufijos largos, el último de la lista ordenada suele ser el más nuevo.
+        split: 0  # dummy para sort(attribute)
+
+    - name: Mostrar comparación de kernels
+      debug:
+        msg:
+          - "Kernel actual (uname -r): {{ current_kernel_cmd.stdout }}"
+          - "Kernel más nuevo instalado: {{ newest_kernel_installed | default('No detectado') }}"
+
+    - name: ¿Hay kernel nuevo distinto al actual?
+      set_fact:
+        kernel_changed: "{{ (newest_kernel_installed is defined) and (newest_kernel_installed | length > 0) and (newest_kernel_installed != current_kernel_cmd.stdout) }}"
+
+    - name: Regenerar configuración de GRUB en BIOS (grub2-mkconfig a /boot/grub2/grub.cfg)
+      command: grub2-mkconfig -o /boot/grub2/grub.cfg
+      when:
+        - update_grub
+        - not ansible_facts['firmware'].get('efi', false) | bool
+      changed_when: true
+
+    - name: Regenerar configuración de GRUB en UEFI (grub2-mkconfig a /boot/efi/EFI/rocky/grub.cfg si existe)
+      shell: |
+        set -euo pipefail
+        if [ -d /sys/firmware/efi ]; then
+          if [ -f /boot/efi/EFI/rocky/grub.cfg ]; then
+            grub2-mkconfig -o /boot/efi/EFI/rocky/grub.cfg
+          elif [ -f /boot/efi/EFI/redhat/grub.cfg ]; then
+            # fallback por compatibilidad (algunas instalaciones heredan 'redhat')
+            grub2-mkconfig -o /boot/efi/EFI/redhat/grub.cfg
+          else
+            # Si no existe, generamos igualmente el de BIOS como respaldo
+            grub2-mkconfig -o /boot/grub2/grub.cfg
+          fi
+        fi
+      args:
+        executable: /bin/bash
+      when:
+        - update_grub
+        - ansible_facts['firmware'].get('efi', false) | bool
+      changed_when: true
+
+    - name: Asegurar que el kernel más nuevo es el predeterminado (mejora de robustez)
+      # En sistemas con BLS normalmente ya arranca el más nuevo; esto lo refuerza.
+      command: grub2-set-default 0
+      when:
+        - update_grub
+        - kernel_changed
+
+    - name: Reiniciar si hay kernel nuevo instalado
+      reboot:
+        msg: "Reiniciando para arrancar con el nuevo kernel"
+        connect_timeout: 10
+        reboot_timeout: 900
+        pre_reboot_delay: 5
+        post_reboot_delay: 15
+      when:
+        - allow_reboot
+        - kernel_changed
+
+    - name: Verificar kernel tras el reinicio (o sin reinicio si no cambió)
+      command: uname -r
+      register: new_kernel_cmd
+      changed_when: false
+
+    - name: Confirmar que el kernel activo es el esperado
+      assert:
+        that:
+          - (not kernel_changed) or (new_kernel_cmd.stdout == newest_kernel_installed)
+        fail_msg: "El kernel activo ({{ new_kernel_cmd.stdout }}) no coincide con el nuevo instalado ({{ newest_kernel_installed }}). Revisa GRUB/arranque."
+        success_msg: "Kernel activo correcto: {{ new_kernel_cmd.stdout }}"
+
+  handlers: []
