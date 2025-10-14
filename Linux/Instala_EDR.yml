@@ -147,6 +147,8 @@
       when: not cpla_unit.stat.exists
 
     - name: Esperar término del instalador (poll cada 5s, máx 5 min)
+      become: false
+      become_user: admendpoint
       ansible.builtin.async_status:
         jid: "{{ install_job.ansible_job_id }}"
       register: install_status
