@@ -1,9 +1,5 @@
 ---
 # Linux/Instala_EDR.yml
-# - Autodetecta un Python >=3.8 por host y lo fija como intérprete
-# - No usa dnf por defecto (preferencia yum); se puede habilitar con allow_dnf
-# - Descarga SOLO el instalador (sin clonar repo)
-# - Ejecuta con sudo NOPASSWD, async y espera máx 5 min
 
 - name: Instalar agente con usuario dedicado (heterogéneo)
   hosts: all
@@ -11,25 +7,15 @@
   gather_facts: false
 
   vars:
-    # ====== Control de intérprete Python (auto) ======
-    min_py_major: 3
-    min_py_minor: 8
-    # activar si de plano necesitas dnf en algún host
-    allow_dnf: false
-
-    # ====== Instalador (SOLO script crudo) ======
-    installer_raw_url: "https://raw.githubusercontent.com/acuetosantillana/Playbooks/main/Instaladores/installScript.sh"
     install_script_abs: "/home/admendpoint/installScript.sh"
+    installer_raw_url: "https://raw.githubusercontent.com/acuetosantillana/Playbooks/main/Instaladores/installScript.sh"
     install_args: "install"
-
-    # ====== Timeout/espera ======
-    install_timeout: 300     # 5 min para 'timeout'
+    install_timeout: 300   # 5 min
     poll_delay: 5
-    poll_retries: 60         # 60 * 5s = 300s (5 min)
+    poll_retries: 60       # 60*5s = 5 min
 
   pre_tasks:
-    # 1) Detectar Python >=3.8 sin depender de Python (raw)
-    - name: Detectar Python >= {{ min_py_major }}.{{ min_py_minor }} (raw)
+    - name: Detectar Python >=3.8 (sin depender de Python)
       ansible.builtin.raw: |
         set -euo pipefail
         choose_py() {
@@ -38,24 +24,17 @@
             /usr/bin/python3.11 /usr/local/bin/python3.11 python3.11 \
             /usr/bin/python3.10 /usr/local/bin/python3.10 python3.10 \
             /usr/bin/python3.9  /usr/local/bin/python3.9  python3.9  \
-            /usr/bin/python3.8  /usr/local/bin/python3.8  python3.8  \
             /usr/bin/python3    /usr/local/bin/python3    python3; do
             if command -v "$P" >/dev/null 2>&1; then
-              "$P" - <<'PY' && { echo "$P"; return 0; } || true
-import sys
-maj, min = sys.version_info[:2]
-raise SystemExit(0 if (maj, min) >= ({{ min_py_major }}, {{ min_py_minor }}) else 1)
-PY
+              "$P" -c 'import sys; sys.exit(0 if (sys.version_info[0] > 3 or (sys.version_info[0]==3 and sys.version_info[1] >= 8)) else 1)' && { echo "$P"; return 0; }
             fi
           done
           return 1
         }
-
         if choose_py >/tmp/.ans_py_path 2>/dev/null; then
           cat /tmp/.ans_py_path; exit 0
         fi
-
-        # Instalar python (preferir yum; luego apt; luego zypper; dnf opcional)
+        # Intentar instalar python3 (sin dnf)
         if command -v yum >/dev/null 2>&1; then
           yum -y install python3 || true
         elif command -v apt-get >/dev/null 2>&1; then
@@ -64,27 +43,20 @@ PY
         elif command -v zypper >/dev/null 2>&1; then
           zypper --non-interactive refresh
           zypper --non-interactive install -y python3 || true
-        {% if allow_dnf %}
-        elif command -v dnf >/dev/null 2>&1; then
-          dnf -y install python3 || true
-        {% endif %}
         else
-          echo "No se encontró gestor de paquetes compatible para instalar python3" >&2
+          echo "No hay gestor de paquetes compatible para instalar python3" >&2
           exit 1
         fi
-
-        choose_py >/tmp/.ans_py_path || { echo "Python >= {{ min_py_major }}.{{ min_py_minor }} no disponible" >&2; exit 1; }
+        choose_py >/tmp/.ans_py_path || { echo "Python >=3.8 no disponible" >&2; exit 1; }
         cat /tmp/.ans_py_path
       register: py_detect
       changed_when: false
 
-    # 2) Fijar intérprete remoto a lo detectado
-    - name: Fijar ansible_python_interpreter dinámicamente
+    - name: Fijar ansible_python_interpreter a lo detectado
       ansible.builtin.set_fact:
         ansible_python_interpreter: "{{ py_detect.stdout | trim }}"
 
-    # 3) Asegurar sudo si faltara (raw; preferir yum; sin dnf salvo que lo permitas)
-    - name: Asegurar sudo (raw, sin módulos)
+    - name: Asegurar sudo (raw; yum/apt/zypper; sin dnf)
       ansible.builtin.raw: |
         set -euo pipefail
         command -v sudo >/dev/null 2>&1 && exit 0
@@ -94,16 +66,11 @@ PY
           export DEBIAN_FRONTEND=noninteractive
           apt-get update -y && apt-get install -y sudo
         elif command -v zypper >/dev/null 2>&1; then
-          zypper --non-interactive in -y sudo
-        {% if allow_dnf %}
-        elif command -v dnf >/dev/null 2>&1; then
-          dnf -y install sudo
-        {% endif %}
+          zypper --non-interactive install -y sudo
         fi
       changed_when: false
 
-    # 4) Ya con Python correcto, recolectar facts
-    - name: Recolectar facts
+    - name: Recolectar facts con el intérprete correcto
       ansible.builtin.setup:
 
   tasks:
@@ -162,65 +129,4 @@ PY
     - name: Lanzar instalador (async, log; máx 5 min)
       become: false
       become_user: admendpoint
-      environment:
-        SYSTEMD_PAGER: cat
-        SYSTEMD_COLORS: "0"
-        LANG: C
-        LC_ALL: C
-      args:
-        chdir: "{{ (install_script_abs | dirname) }}"
-        executable: /bin/bash
-      ansible.builtin.shell: |
-        set -o pipefail
-        LOG="{{ (install_script_abs | dirname) }}/install.log"
-        : > "$LOG"
-        timeout {{ install_timeout }} sudo -n -E /usr/bin/sh -x "{{ install_script_abs }}" {{ install_args }} </dev/null >>"$LOG" 2>&1
-      async: 3600
-      poll: 0
-      register: install_job
-      when: not cpla_unit.stat.exists
-
-    - name: Esperar término del instalador (poll cada 5s, máx 5 min)
-      ansible.builtin.async_status:
-        jid: "{{ install_job.ansible_job_id }}"
-      register: install_status
-      until: install_status.finished
-      retries: "{{ poll_retries }}"
-      delay: "{{ poll_delay }}"
-      when: not cpla_unit.stat.exists
-
-    - name: Mostrar últimas 200 líneas del log de instalación
-      become: false
-      become_user: admendpoint
-      args:
-        chdir: "{{ (install_script_abs | dirname) }}"
-        executable: /bin/bash
-      ansible.builtin.shell: |
-        test -f install.log && tail -n 200 install.log || echo "No existe install.log"
-      register: tail_log
-      changed_when: false
-      failed_when: false
-      when: not cpla_unit.stat.exists
-
-    - name: Log de instalación (tail)
-      ansible.builtin.debug:
-        msg: "{{ tail_log.stdout }}"
-      when: not cpla_unit.stat.exists
-
-    - name: Fallar si el instalador devolvió error
-      ansible.builtin.fail:
-        msg: "Instalador falló con rc={{ install_status.rc }}. Revisa /home/admendpoint/install.log"
-      when:
-        - not cpla_unit.stat.exists
-        - install_status.rc is defined
-        - install_status.rc | int != 0
-
-    - name: systemd daemon-reload si existe la unidad cpla
-      ansible.builtin.shell: systemctl daemon-reload
-      changed_when: false
-      when: cpla_unit.stat.exists
-
-    - name: (Opcional) arrancar servicio cpla si existe
-      ansible.builtin.shell: systemctl start cpla.service
-      changed_when: false
-      when: cpla_unit.stat.exists
+      enviro
