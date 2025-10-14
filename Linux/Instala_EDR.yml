@@ -1,35 +1,30 @@
 ---
-- name: Instalar agente con usuario dedicado
+- name: Instalar agente con usuario dedicado (solo instalador)
   hosts: all
   become: true
   gather_facts: true
 
   vars:
-    # Usar Python moderno del host (evita el error de future annotations)
+    # Usar Python moderno del host (evita errores con Ansible 2.18+)
     ansible_python_interpreter: /usr/bin/python3
 
-    # ==== Parámetros de tu repo e instalador ====
-    repo_url: "https://github.com/acuetosantillana/Playbooks.git"
-    repo_version: "main"
-    repo_dest: "/home/admendpoint/agent"
-    script_src_in_repo: "Instaladores/installScript.sh"
+    # ====== Parámetros del instalador ======
+    # Descarga directa del script (sin clonar repo)
+    installer_raw_url: "https://raw.githubusercontent.com/acuetosantillana/Playbooks/main/Instaladores/installScript.sh"
     install_script_abs: "/home/admendpoint/installScript.sh"
     install_args: "install"
 
   pre_tasks:
-    - name: Bootstrap de git/sudo usando CLI (yum si existe, si no dnf)
+    - name: Bootstrap mínimo - asegurar sudo (vía CLI; sin módulos yum/dnf)
       ansible.builtin.shell: |
         set -o pipefail
-        PKGS=""
-        command -v git  >/dev/null 2>&1 || PKGS="$PKGS git"
-        command -v sudo >/dev/null 2>&1 || PKGS="$PKGS sudo"
-        if [ -n "$PKGS" ]; then
+        command -v sudo >/dev/null 2>&1 || {
           if command -v yum >/dev/null 2>&1; then
-            yum -y install $PKGS
+            yum -y install sudo
           else
-            dnf -y install $PKGS
+            dnf -y install sudo
           fi
-        fi
+        }
       args:
         executable: /bin/bash
       changed_when: false
@@ -51,31 +46,15 @@
         mode: "0750"
         state: directory
 
-    - name: Clonar/actualizar repositorio del instalador (como admendpoint)
-      ansible.builtin.git:
-        repo: "{{ repo_url }}"
-        dest: "{{ repo_dest }}"
-        version: "{{ repo_version }}"
-        update: yes
-      become_user: admendpoint
-
-    - name: Copiar/actualizar script de instalación a ubicación fija en $HOME (desde remoto)
-      ansible.builtin.copy:
-        src: "{{ repo_dest }}/{{ script_src_in_repo }}"
+    - name: Descargar SOLO el instalador desde GitHub (sin clonar repo)
+      ansible.builtin.get_url:
+        url: "{{ installer_raw_url }}"
         dest: "{{ install_script_abs }}"
         owner: admendpoint
         group: admendpoint
         mode: "0750"
-        remote_src: true
-
-    # (Alternativa si prefieres symlink en lugar de copia)
-    # - name: Enlazar script del repo a la ruta fija en $HOME
-    #   ansible.builtin.file:
-    #     src: "{{ repo_dest }}/{{ script_src_in_repo }}"
-    #     dest: "{{ install_script_abs }}"
-    #     state: link
-    #     owner: admendpoint
-    #     group: admendpoint
+        force: yes
+        validate_certs: yes
 
     - name: Publicar sudoers para admendpoint con comandos NOPASSWD
       ansible.builtin.copy:
@@ -97,9 +76,10 @@
             /usr/bin/sh -x /home/admendpoint/installScript.sh install
         validate: '/usr/sbin/visudo -cf %s'
 
-    - name: Ejecutar instalador como usuario admendpoint
+    - name: Ejecutar instalador vía sudo como admendpoint (requiere NOPASSWD)
+      become: false
       become_user: admendpoint
       args:
         chdir: "{{ (install_script_abs | dirname) }}"
       ansible.builtin.shell: |
-        /bin/sh -x "{{ install_script_abs }}" {{ install_args }}
+        sudo -n /usr/bin/sh -x "{{ install_script_abs }}" {{ install_args }}
