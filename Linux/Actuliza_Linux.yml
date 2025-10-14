@@ -5,6 +5,7 @@
   gather_facts: yes
 
   vars:
+    ansible_python_interpreter: /usr/libexec/platform-python   # ← quita esta línea si prefieres no forzar intérprete
     allow_reboot: true          # Pon en false si no quieres que reinicie automáticamente
     update_grub: true           # Desactiva si NO quieres regenerar grub.cfg
     kernel_packages:
