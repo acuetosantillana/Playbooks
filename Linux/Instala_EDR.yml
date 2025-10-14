@@ -1,6 +1,6 @@
 ---
 - name: Instalar agente con usuario dedicado (bootstrap sin dnf/yum module)
-  hosts: agentes
+  hosts: all
   become: true
   gather_facts: true
 
