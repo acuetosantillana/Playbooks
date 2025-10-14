@@ -59,13 +59,23 @@
         update: yes
       become_user: admendpoint
 
-    - name: Copiar/actualizar script de instalación a ubicación fija en $HOME
+    - name: Copiar/actualizar script de instalación a ubicación fija en $HOME (desde remoto)
       ansible.builtin.copy:
         src: "{{ repo_dest }}/{{ script_src_in_repo }}"
         dest: "{{ install_script_abs }}"
         owner: admendpoint
         group: admendpoint
         mode: "0750"
+        remote_src: true
+
+    # (Alternativa si prefieres symlink en lugar de copia)
+    # - name: Enlazar script del repo a la ruta fija en $HOME
+    #   ansible.builtin.file:
+    #     src: "{{ repo_dest }}/{{ script_src_in_repo }}"
+    #     dest: "{{ install_script_abs }}"
+    #     state: link
+    #     owner: admendpoint
+    #     group: admendpoint
 
     - name: Publicar sudoers para admendpoint con comandos NOPASSWD
       ansible.builtin.copy:
