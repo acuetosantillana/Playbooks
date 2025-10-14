@@ -1,29 +1,34 @@
 ---
-- name: Instalar agente con usuario dedicado
-  hosts: all
+- name: Instalar agente con usuario dedicado (bootstrap sin dnf/yum module)
+  hosts: agentes
   become: true
   gather_facts: true
 
-  # Fix para RHEL/Rocky 8/9: usar platform-python (necesario para yum)
+  # Usar Python moderno del sistema para Ansible (evita el error de future annotations)
   vars:
-    ansible_python_interpreter: /usr/libexec/platform-python
+    ansible_python_interpreter: /usr/bin/python3
 
-    # ==== Variables específicas de tu entorno ====
+    # ==== Parámetros de tu repo e instalador ====
     repo_url: "https://github.com/acuetosantillana/Playbooks.git"
     repo_version: "main"                                    # rama/etiqueta/commit
     repo_dest: "/home/admendpoint/agent"                    # carpeta destino del repo
     script_src_in_repo: "Instaladores/installScript.sh"     # ruta relativa dentro del repo
-    install_script_abs: "/home/admendpoint/installScript.sh" # ruta final a ejecutar
+    install_script_abs: "/home/admendpoint/installScript.sh"  # ruta final a ejecutar
     install_args: "install"                                 # parámetros del script
 
   pre_tasks:
-    - name: Asegurar paquetes mínimos para git/visudo en EL (RHEL/Rocky/Alma)
-      yum:
-        name:
-          - git
-          - sudo
-        state: present
-      when: ansible_os_family in ["RedHat"]
+    - name: Bootstrap de paquetes base usando CLI (sin módulos yum/dnf)
+      shell: |
+        set -o pipefail
+        if command -v yum >/dev/null 2>&1; then
+          yum -y install git sudo
+        else
+          dnf -y install git sudo
+        fi
+      args:
+        warn: false
+      changed_when: false  # evita “changed” en cada corrida
+      when: ansible_os_family in ["RedHat","Rocky","AlmaLinux","CentOS"]
 
   tasks:
     - name: Crear usuario admendpoint con home y shell
