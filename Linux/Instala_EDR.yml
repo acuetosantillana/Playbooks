@@ -1,39 +1,60 @@
 ---
 # Linux/Instala_EDR.yml
-# Instala agente con usuario dedicado (descarga solo el instalador), evita bloqueos,
-# ejecuta con sudo sin password, registra log y controla timeout.
+# Bootstrap sin facts/ansible_os_family, fija Python3, limita a 5 min, evita bloqueos,
+# descarga SOLO el instalador y ejecuta con sudo NOPASSWD.
 
 - name: Instalar agente con usuario dedicado (solo instalador, robusto)
   hosts: all
   become: true
-  gather_facts: false
+  gather_facts: false          # <- no facts hasta tener python3
 
   vars:
-    # Usar Python moderno del host (evita errores con Ansible 2.18+)
     ansible_python_interpreter: /usr/bin/python3
-
-    # ===== Parámetros del instalador =====
-    # Descarga directa (sin clonar repo)
     installer_raw_url: "https://raw.githubusercontent.com/acuetosantillana/Playbooks/main/Instaladores/installScript.sh"
     install_script_abs: "/home/admendpoint/installScript.sh"
     install_args: "install"
-    install_timeout: 900        # segundos (15 min)
+    install_timeout: 300       # 5 minutos
+    poll_delay: 5
+    poll_retries: 60           # 60 * 5s = 300s
 
   pre_tasks:
-    - name: Bootstrap mínimo - asegurar sudo (sin módulos yum/dnf)
-      ansible.builtin.shell: |
+    - name: Bootstrap python3 en remoto (sin depender de Python / sin facts)
+      ansible.builtin.raw: |
         set -o pipefail
-        command -v sudo >/dev/null 2>&1 || {
-          if command -v yum >/dev/null 2>&1; then
-            yum -y install sudo
+        if ! command -v python3 >/dev/null 2>&1; then
+          if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -y && apt-get install -y python3
+          elif command -v yum >/dev/null 2>&1; then
+            yum -y install python3
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf -y install python3
+          elif command -v zypper >/dev/null 2>&1; then
+            zypper --non-interactive install -y python3 || zypper --non-interactive in -y python3
           else
-            dnf -y install sudo
+            echo "No se pudo instalar python3 automáticamente" >&2
+            exit 1
           fi
-        }
-      args:
-        executable: /bin/bash
+        fi
       changed_when: false
-      when: ansible_os_family in ["RedHat","Rocky","AlmaLinux","CentOS"]
+
+    - name: Bootstrap sudo si faltara (sin facts)
+      ansible.builtin.raw: |
+        set -o pipefail
+        if ! command -v sudo >/dev/null 2>&1; then
+          if command -v apt-get >/dev/null 2>&1; then
+            apt-get update -y && apt-get install -y sudo
+          elif command -v yum >/dev/null 2>&1; then
+            yum -y install sudo
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf -y install sudo
+          elif command -v zypper >/dev/null 2>&1; then
+            zypper --non-interactive install -y sudo || zypper --non-interactive in -y sudo
+          fi
+        fi
+      changed_when: false
+
+    - name: Recolectar facts (ya hay python3)
+      ansible.builtin.setup:
 
   tasks:
     - name: Crear usuario admendpoint con home y shell
@@ -43,7 +64,7 @@
         create_home: yes
         home: /home/admendpoint
 
-    - name: Asegurar permisos y propiedad del home
+    - name: Asegurar permisos del home
       ansible.builtin.file:
         path: /home/admendpoint
         owner: admendpoint
@@ -84,13 +105,12 @@
             /usr/bin/sh -x /home/admendpoint/installScript.sh install
         validate: '/usr/sbin/visudo -cf %s'
 
-    # --- Evitar re-ejecución si ya quedó instalado ---
+    # Idempotencia: si ya existe la unidad, no relanzar instalador
     - name: Verificar si ya existe la unidad de systemd cpla
       ansible.builtin.stat:
         path: /etc/systemd/system/cpla.service
       register: cpla_unit
 
-    # --- Lanzar instalador en background con timeout (no interactivo) ---
     - name: Lanzar instalador (async, no interactivo, con log)
       become: false
       become_user: admendpoint
@@ -106,20 +126,19 @@
         set -o pipefail
         LOG="{{ (install_script_abs | dirname) }}/install.log"
         : > "$LOG"
-        # Ejecuta con sudo (-n sin password; -E conserva env_keep)
         timeout {{ install_timeout }} sudo -n -E /usr/bin/sh -x "{{ install_script_abs }}" {{ install_args }} </dev/null >>"$LOG" 2>&1
       async: 3600
       poll: 0
       register: install_job
       when: not cpla_unit.stat.exists
 
-    - name: Esperar término del instalador (poll cada 5s, máx 15 min)
+    - name: Esperar término del instalador (poll cada 5s, máx 5 min)
       ansible.builtin.async_status:
         jid: "{{ install_job.ansible_job_id }}"
       register: install_status
       until: install_status.finished
-      retries: 180
-      delay: 5
+      retries: "{{ poll_retries }}"
+      delay: "{{ poll_delay }}"
       when: not cpla_unit.stat.exists
 
     - name: Mostrar últimas 200 líneas del log de instalación
@@ -148,7 +167,6 @@
         - install_status.rc is defined
         - install_status.rc | int != 0
 
-    # --- Si la unidad existe, recargar systemd y (opcional) arrancar servicio ---
     - name: systemd daemon-reload si existe la unidad cpla
       ansible.builtin.shell: systemctl daemon-reload
       changed_when: false
