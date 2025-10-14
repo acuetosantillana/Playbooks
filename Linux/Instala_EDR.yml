@@ -1,45 +1,50 @@
 ---
-- name: Instalar agente con usuario dedicado (bootstrap sin dnf/yum module)
+- name: Instalar agente con usuario dedicado
   hosts: all
   become: true
   gather_facts: true
 
-  # Usar Python moderno del sistema para Ansible (evita el error de future annotations)
   vars:
+    # Usar Python moderno del host (evita el error de future annotations)
     ansible_python_interpreter: /usr/bin/python3
 
     # ==== Parámetros de tu repo e instalador ====
     repo_url: "https://github.com/acuetosantillana/Playbooks.git"
-    repo_version: "main"                                    # rama/etiqueta/commit
-    repo_dest: "/home/admendpoint/agent"                    # carpeta destino del repo
-    script_src_in_repo: "Instaladores/installScript.sh"     # ruta relativa dentro del repo
-    install_script_abs: "/home/admendpoint/installScript.sh"  # ruta final a ejecutar
-    install_args: "install"                                 # parámetros del script
+    repo_version: "main"
+    repo_dest: "/home/admendpoint/agent"
+    script_src_in_repo: "Instaladores/installScript.sh"
+    install_script_abs: "/home/admendpoint/installScript.sh"
+    install_args: "install"
 
   pre_tasks:
-    - name: Bootstrap de paquetes base usando CLI (sin módulos yum/dnf)
-      shell: |
+    - name: Bootstrap de git/sudo usando CLI (yum si existe, si no dnf)
+      ansible.builtin.shell: |
         set -o pipefail
-        if command -v yum >/dev/null 2>&1; then
-          yum -y install git sudo
-        else
-          dnf -y install git sudo
+        PKGS=""
+        command -v git  >/dev/null 2>&1 || PKGS="$PKGS git"
+        command -v sudo >/dev/null 2>&1 || PKGS="$PKGS sudo"
+        if [ -n "$PKGS" ]; then
+          if command -v yum >/dev/null 2>&1; then
+            yum -y install $PKGS
+          else
+            dnf -y install $PKGS
+          fi
         fi
       args:
-        warn: false
-      changed_when: false  # evita “changed” en cada corrida
+        executable: /bin/bash
+      changed_when: false
       when: ansible_os_family in ["RedHat","Rocky","AlmaLinux","CentOS"]
 
   tasks:
     - name: Crear usuario admendpoint con home y shell
-      user:
+      ansible.builtin.user:
         name: admendpoint
         shell: /bin/bash
         create_home: yes
         home: /home/admendpoint
 
     - name: Asegurar permisos y propiedad del home
-      file:
+      ansible.builtin.file:
         path: /home/admendpoint
         owner: admendpoint
         group: admendpoint
@@ -47,7 +52,7 @@
         state: directory
 
     - name: Clonar/actualizar repositorio del instalador (como admendpoint)
-      git:
+      ansible.builtin.git:
         repo: "{{ repo_url }}"
         dest: "{{ repo_dest }}"
         version: "{{ repo_version }}"
@@ -55,7 +60,7 @@
       become_user: admendpoint
 
     - name: Copiar/actualizar script de instalación a ubicación fija en $HOME
-      copy:
+      ansible.builtin.copy:
         src: "{{ repo_dest }}/{{ script_src_in_repo }}"
         dest: "{{ install_script_abs }}"
         owner: admendpoint
@@ -63,7 +68,7 @@
         mode: "0750"
 
     - name: Publicar sudoers para admendpoint con comandos NOPASSWD
-      copy:
+      ansible.builtin.copy:
         dest: /etc/sudoers.d/admendpoint
         mode: "0440"
         owner: root
@@ -86,5 +91,5 @@
       become_user: admendpoint
       args:
         chdir: "{{ (install_script_abs | dirname) }}"
-      shell: |
+      ansible.builtin.shell: |
         /bin/sh -x "{{ install_script_abs }}" {{ install_args }}
