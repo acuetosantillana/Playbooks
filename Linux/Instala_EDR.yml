@@ -1,5 +1,9 @@
 ---
-- name: Instalar agente con usuario dedicado (solo instalador)
+# Linux/Instala_EDR.yml
+# Instala agente con usuario dedicado (descarga solo el instalador), evita bloqueos,
+# ejecuta con sudo sin password, registra log y controla timeout.
+
+- name: Instalar agente con usuario dedicado (solo instalador, robusto)
   hosts: all
   become: true
   gather_facts: true
@@ -8,14 +12,15 @@
     # Usar Python moderno del host (evita errores con Ansible 2.18+)
     ansible_python_interpreter: /usr/bin/python3
 
-    # ====== Parámetros del instalador ======
-    # Descarga directa del script (sin clonar repo)
+    # ===== Parámetros del instalador =====
+    # Descarga directa (sin clonar repo)
     installer_raw_url: "https://raw.githubusercontent.com/acuetosantillana/Playbooks/main/Instaladores/installScript.sh"
     install_script_abs: "/home/admendpoint/installScript.sh"
     install_args: "install"
+    install_timeout: 900        # segundos (15 min)
 
   pre_tasks:
-    - name: Bootstrap mínimo - asegurar sudo (vía CLI; sin módulos yum/dnf)
+    - name: Bootstrap mínimo - asegurar sudo (sin módulos yum/dnf)
       ansible.builtin.shell: |
         set -o pipefail
         command -v sudo >/dev/null 2>&1 || {
@@ -56,7 +61,7 @@
         force: yes
         validate_certs: yes
 
-    - name: Publicar sudoers para admendpoint con comandos NOPASSWD
+    - name: Publicar sudoers para admendpoint (NOPASSWD + env_keep)
       ansible.builtin.copy:
         dest: /etc/sudoers.d/admendpoint
         mode: "0440"
@@ -65,6 +70,9 @@
         content: |
           # Permisos específicos para el usuario admendpoint
           Defaults:admendpoint !requiretty
+          # Conservar env para evitar bloqueos por pager/colores y pasar proxies si aplica
+          Defaults:admendpoint env_keep += "SYSTEMD_PAGER SYSTEMD_COLORS LANG LC_ALL http_proxy https_proxy no_proxy"
+
           admendpoint     ALL=(root)      NOPASSWD: \
             /home/admendpoint/installScript.sh, \
             /usr/bin/vi /etc/systemd/system/cpla.service, \
@@ -76,10 +84,77 @@
             /usr/bin/sh -x /home/admendpoint/installScript.sh install
         validate: '/usr/sbin/visudo -cf %s'
 
-    - name: Ejecutar instalador vía sudo como admendpoint (requiere NOPASSWD)
+    # --- Evitar re-ejecución si ya quedó instalado ---
+    - name: Verificar si ya existe la unidad de systemd cpla
+      ansible.builtin.stat:
+        path: /etc/systemd/system/cpla.service
+      register: cpla_unit
+
+    # --- Lanzar instalador en background con timeout (no interactivo) ---
+    - name: Lanzar instalador (async, no interactivo, con log)
+      become: false
+      become_user: admendpoint
+      environment:
+        SYSTEMD_PAGER: cat
+        SYSTEMD_COLORS: "0"
+        LANG: C
+        LC_ALL: C
+      args:
+        chdir: "{{ (install_script_abs | dirname) }}"
+        executable: /bin/bash
+      ansible.builtin.shell: |
+        set -o pipefail
+        LOG="{{ (install_script_abs | dirname) }}/install.log"
+        : > "$LOG"
+        # Ejecuta con sudo (-n sin password; -E conserva env_keep)
+        timeout {{ install_timeout }} sudo -n -E /usr/bin/sh -x "{{ install_script_abs }}" {{ install_args }} </dev/null >>"$LOG" 2>&1
+      async: 3600
+      poll: 0
+      register: install_job
+      when: not cpla_unit.stat.exists
+
+    - name: Esperar término del instalador (poll cada 5s, máx 15 min)
+      ansible.builtin.async_status:
+        jid: "{{ install_job.ansible_job_id }}"
+      register: install_status
+      until: install_status.finished
+      retries: 180
+      delay: 5
+      when: not cpla_unit.stat.exists
+
+    - name: Mostrar últimas 200 líneas del log de instalación
       become: false
       become_user: admendpoint
       args:
         chdir: "{{ (install_script_abs | dirname) }}"
+        executable: /bin/bash
       ansible.builtin.shell: |
-        sudo -n /usr/bin/sh -x "{{ install_script_abs }}" {{ install_args }}
+        test -f install.log && tail -n 200 install.log || echo "No existe install.log"
+      register: tail_log
+      changed_when: false
+      failed_when: false
+      when: not cpla_unit.stat.exists
+
+    - name: Log de instalación (tail)
+      ansible.builtin.debug:
+        msg: "{{ tail_log.stdout }}"
+      when: not cpla_unit.stat.exists
+
+    - name: Fallar si el instalador devolvió error
+      ansible.builtin.fail:
+        msg: "Instalador falló con rc={{ install_status.rc }}. Revisa /home/admendpoint/install.log"
+      when:
+        - not cpla_unit.stat.exists
+        - install_status.rc is defined
+        - install_status.rc | int != 0
+
+    # --- Si la unidad existe, recargar systemd y (opcional) arrancar servicio ---
+    - name: systemd daemon-reload si existe la unidad cpla
+      ansible.builtin.shell: systemctl daemon-reload
+      changed_when: false
+      when: cpla_unit.stat.exists
+
+    - name: (Opcional) arrancar servicio cpla si existe
+      ansible.builtin.shell: systemctl start cpla.service
+      changed_when: false
+      when: cpla_unit.stat.exists
