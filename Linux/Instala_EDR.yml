@@ -1,59 +1,59 @@
 ---
 # Linux/Instala_EDR.yml
-# Bootstrap sin facts/ansible_os_family, fija Python3, limita a 5 min, evita bloqueos,
-# descarga SOLO el instalador y ejecuta con sudo NOPASSWD.
 
-- name: Instalar agente con usuario dedicado (solo instalador, robusto)
+- name: Instalar agente con usuario dedicado (solo instalador, 5 min máx)
   hosts: all
   become: true
-  gather_facts: false          # <- no facts hasta tener python3
+  gather_facts: false     # No facts hasta fijar el intérprete correcto
 
   vars:
-    ansible_python_interpreter: /usr/bin/python3
+    # ===== Instalador (solo el script, sin clonar repo) =====
     installer_raw_url: "https://raw.githubusercontent.com/acuetosantillana/Playbooks/main/Instaladores/installScript.sh"
     install_script_abs: "/home/admendpoint/installScript.sh"
     install_args: "install"
-    install_timeout: 300       # 5 minutos
+    install_timeout: 300   # 5 minutos
     poll_delay: 5
-    poll_retries: 60           # 60 * 5s = 300s
+    poll_retries: 60       # 60 * 5s = 300s
 
   pre_tasks:
-    - name: Bootstrap python3 en remoto (sin depender de Python / sin facts)
+    # 1) Descubrir python3.11 (o, si no, python3 válido) SIN depender de Python
+    - name: Detectar ruta de Python 3.11 en remoto (raw)
       ansible.builtin.raw: |
-        set -o pipefail
-        if ! command -v python3 >/dev/null 2>&1; then
-          if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -y && apt-get install -y python3
-          elif command -v yum >/dev/null 2>&1; then
-            yum -y install python3
-          elif command -v dnf >/dev/null 2>&1; then
-            dnf -y install python3
-          elif command -v zypper >/dev/null 2>&1; then
-            zypper --non-interactive install -y python3 || zypper --non-interactive in -y python3
-          else
-            echo "No se pudo instalar python3 automáticamente" >&2
-            exit 1
+        set -euo pipefail
+        for P in /usr/bin/python3.11 /usr/local/bin/python3.11 python3.11 /usr/bin/python3 /usr/local/bin/python3 python3; do
+          if command -v "$P" >/dev/null 2>&1; then
+            "$P" -c 'import sys; exit(0 if sys.version_info[:2] >= (3,8) else 1)' && { echo "$P"; exit 0; }
           fi
+        done
+        echo "No hay Python >=3.8 disponible" >&2
+        exit 1
+      register: py_detect
+      changed_when: false
+
+    # 2) Fijar ansible_python_interpreter a lo detectado
+    - name: Fijar ansible_python_interpreter dinámicamente
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: "{{ py_detect.stdout | trim }}"
+
+    # 3) (Opcional) asegurar sudo si faltara (sin usar Python por si acaso)
+    - name: Asegurar sudo si falta (raw; yum preferido)
+      ansible.builtin.raw: |
+        set -euo pipefail
+        command -v sudo >/dev/null 2>&1 && exit 0
+        if command -v yum >/dev/null 2>&1; then
+          yum -y install sudo
+        elif command -v dnf >/dev/null 2>&1; then
+          dnf -y install sudo
+        elif command -v apt-get >/dev/null 2>&1; then
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -y && apt-get install -y sudo
+        elif command -v zypper >/dev/null 2>&1; then
+          zypper --non-interactive in -y sudo
         fi
       changed_when: false
 
-    - name: Bootstrap sudo si faltara (sin facts)
-      ansible.builtin.raw: |
-        set -o pipefail
-        if ! command -v sudo >/dev/null 2>&1; then
-          if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -y && apt-get install -y sudo
-          elif command -v yum >/dev/null 2>&1; then
-            yum -y install sudo
-          elif command -v dnf >/dev/null 2>&1; then
-            dnf -y install sudo
-          elif command -v zypper >/dev/null 2>&1; then
-            zypper --non-interactive install -y sudo || zypper --non-interactive in -y sudo
-          fi
-        fi
-      changed_when: false
-
-    - name: Recolectar facts (ya hay python3)
+    # 4) Ahora sí, recolectar facts con el Python correcto
+    - name: Recolectar facts con Python correcto
       ansible.builtin.setup:
 
   tasks:
@@ -91,7 +91,7 @@
         content: |
           # Permisos específicos para el usuario admendpoint
           Defaults:admendpoint !requiretty
-          # Conservar env para evitar bloqueos por pager/colores y pasar proxies si aplica
+          # Conservar env para evitar bloqueos por pager y pasar proxies si aplica
           Defaults:admendpoint env_keep += "SYSTEMD_PAGER SYSTEMD_COLORS LANG LC_ALL http_proxy https_proxy no_proxy"
 
           admendpoint     ALL=(root)      NOPASSWD: \
@@ -105,13 +105,13 @@
             /usr/bin/sh -x /home/admendpoint/installScript.sh install
         validate: '/usr/sbin/visudo -cf %s'
 
-    # Idempotencia: si ya existe la unidad, no relanzar instalador
+    # Idempotencia: si ya hay unidad cpla creada, no relanzamos el instalador
     - name: Verificar si ya existe la unidad de systemd cpla
       ansible.builtin.stat:
         path: /etc/systemd/system/cpla.service
       register: cpla_unit
 
-    - name: Lanzar instalador (async, no interactivo, con log)
+    - name: Lanzar instalador (async, no interactivo, con log; máx 5 min)
       become: false
       become_user: admendpoint
       environment:
