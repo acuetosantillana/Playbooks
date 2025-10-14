@@ -4,26 +4,26 @@
   become: true
   gather_facts: true
 
+  # Fix para RHEL/Rocky 8/9: usar platform-python (necesario para yum)
   vars:
-    # ==== Ajusta estas variables a tu repositorio ====
-    repo_url: "https://github.com/acuetosantillana/Playbooks.git"     # <-- CAMBIA
-    repo_version: "main"                                     # rama/etiqueta/commit
-    repo_dest: "/home/admendpoint/agent"                     # carpeta del repo
-    install_script_abs: "/home/admendpoint/installScript.sh" # ruta final a ejecutar
-    install_args: "install"                                  # parámetros del script
+    ansible_python_interpreter: /usr/libexec/platform-python
 
-    # Opcional: si el script real está dentro del repo con otro nombre
-    # y quieres copiarlo a /home/admendpoint/installScript.sh
-    script_src_in_repo: "Instaladores/installScript.sh"           # ruta relativa dentro del repo
+    # ==== Variables específicas de tu entorno ====
+    repo_url: "https://github.com/acuetosantillana/Playbooks.git"
+    repo_version: "main"                                    # rama/etiqueta/commit
+    repo_dest: "/home/admendpoint/agent"                    # carpeta destino del repo
+    script_src_in_repo: "Instaladores/installScript.sh"     # ruta relativa dentro del repo
+    install_script_abs: "/home/admendpoint/installScript.sh" # ruta final a ejecutar
+    install_args: "install"                                 # parámetros del script
 
   pre_tasks:
-    - name: Asegurar paquetes mínimos para git/visudo (RHEL/Rocky/CentOS)
-      package:
+    - name: Asegurar paquetes mínimos para git/visudo en EL (RHEL/Rocky/Alma)
+      yum:
         name:
           - git
           - sudo
         state: present
-      when: ansible_os_family in ["RedHat", "Rocky", "AlmaLinux", "CentOS"]
+      when: ansible_os_family in ["RedHat"]
 
   tasks:
     - name: Crear usuario admendpoint con home y shell
@@ -41,7 +41,7 @@
         mode: "0750"
         state: directory
 
-    - name: Clonar/actualizar repositorio del instalador
+    - name: Clonar/actualizar repositorio del instalador (como admendpoint)
       git:
         repo: "{{ repo_url }}"
         dest: "{{ repo_dest }}"
@@ -65,7 +65,6 @@
         group: root
         content: |
           # Permisos específicos para el usuario admendpoint
-          # VALIDADO CON visudo
           Defaults:admendpoint !requiretty
           admendpoint     ALL=(root)      NOPASSWD: \
             /home/admendpoint/installScript.sh, \
@@ -84,5 +83,3 @@
         chdir: "{{ (install_script_abs | dirname) }}"
       shell: |
         /bin/sh -x "{{ install_script_abs }}" {{ install_args }}
-
-  handlers: []
