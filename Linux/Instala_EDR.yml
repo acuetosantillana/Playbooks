@@ -1,0 +1,88 @@
+---
+- name: Instalar agente con usuario dedicado
+  hosts: agentes
+  become: true
+  gather_facts: true
+
+  vars:
+    # ==== Ajusta estas variables a tu repositorio ====
+    repo_url: "https://tu.git.server/grupo/proyecto.git"     # <-- CAMBIA
+    repo_version: "main"                                     # rama/etiqueta/commit
+    repo_dest: "/home/admendpoint/agent"                     # carpeta del repo
+    install_script_abs: "/home/admendpoint/installScript.sh" # ruta final a ejecutar
+    install_args: "install"                                  # parámetros del script
+
+    # Opcional: si el script real está dentro del repo con otro nombre
+    # y quieres copiarlo a /home/admendpoint/installScript.sh
+    script_src_in_repo: "scripts/installScript.sh"           # ruta relativa dentro del repo
+
+  pre_tasks:
+    - name: Asegurar paquetes mínimos para git/visudo (RHEL/Rocky/CentOS)
+      package:
+        name:
+          - git
+          - sudo
+        state: present
+      when: ansible_os_family in ["RedHat", "Rocky", "AlmaLinux", "CentOS"]
+
+  tasks:
+    - name: Crear usuario admendpoint con home y shell
+      user:
+        name: admendpoint
+        shell: /bin/bash
+        create_home: yes
+        home: /home/admendpoint
+
+    - name: Asegurar permisos y propiedad del home
+      file:
+        path: /home/admendpoint
+        owner: admendpoint
+        group: admendpoint
+        mode: "0750"
+        state: directory
+
+    - name: Clonar/actualizar repositorio del instalador
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ repo_dest }}"
+        version: "{{ repo_version }}"
+        update: yes
+      become_user: admendpoint
+
+    - name: Copiar/actualizar script de instalación a ubicación fija en $HOME
+      copy:
+        src: "{{ repo_dest }}/{{ script_src_in_repo }}"
+        dest: "{{ install_script_abs }}"
+        owner: admendpoint
+        group: admendpoint
+        mode: "0750"
+
+    - name: Publicar sudoers para admendpoint con comandos NOPASSWD
+      copy:
+        dest: /etc/sudoers.d/admendpoint
+        mode: "0440"
+        owner: root
+        group: root
+        content: |
+          # Permisos específicos para el usuario admendpoint
+          # VALIDADO CON visudo
+          Defaults:admendpoint !requiretty
+          admendpoint     ALL=(root)      NOPASSWD: \
+            /home/admendpoint/installScript.sh, \
+            /usr/bin/vi /etc/systemd/system/cpla.service, \
+            /usr/bin/systemctl start cpla.service, \
+            /usr/bin/systemctl stop cpla.service, \
+            /usr/bin/systemctl status cpla.service, \
+            /usr/bin/systemctl restart cpla.service, \
+            /usr/bin/systemctl daemon-reload, \
+            /usr/bin/sh -x /home/admendpoint/installScript.sh install
+        validate: '/usr/sbin/visudo -cf %s'
+
+    - name: Ejecutar instalador como usuario admendpoint
+      become_user: admendpoint
+      args:
+        chdir: "{{ (install_script_abs | dirname) }}"
+      shell: |
+        /bin/sh -x "{{ install_script_abs }}" {{ install_args }}
+
+  handlers: []
