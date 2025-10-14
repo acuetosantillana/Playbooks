@@ -6,7 +6,7 @@
 - name: Instalar agente con usuario dedicado (solo instalador, robusto)
   hosts: all
   become: true
-  gather_facts: true
+  gather_facts: false
 
   vars:
     # Usar Python moderno del host (evita errores con Ansible 2.18+)
