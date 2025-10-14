@@ -6,7 +6,7 @@
 
   vars:
     # ==== Ajusta estas variables a tu repositorio ====
-    repo_url: "https://tu.git.server/grupo/proyecto.git"     # <-- CAMBIA
+    repo_url: "https://github.com/acuetosantillana/Playbooks.git"     # <-- CAMBIA
     repo_version: "main"                                     # rama/etiqueta/commit
     repo_dest: "/home/admendpoint/agent"                     # carpeta del repo
     install_script_abs: "/home/admendpoint/installScript.sh" # ruta final a ejecutar
@@ -14,7 +14,7 @@
 
     # Opcional: si el script real está dentro del repo con otro nombre
     # y quieres copiarlo a /home/admendpoint/installScript.sh
-    script_src_in_repo: "scripts/installScript.sh"           # ruta relativa dentro del repo
+    script_src_in_repo: "Instaladores/installScript.sh"           # ruta relativa dentro del repo
 
   pre_tasks:
     - name: Asegurar paquetes mínimos para git/visudo (RHEL/Rocky/CentOS)
