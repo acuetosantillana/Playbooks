@@ -126,7 +126,7 @@
       register: cpla_unit
 
     - name: Lanzar instalador (async, log; máx 5 min)
-      become: false
+      become: true
       become_user: admendpoint
       environment:
         SYSTEMD_PAGER: cat
@@ -147,7 +147,7 @@
       when: not cpla_unit.stat.exists
 
     - name: Esperar término del instalador (poll cada 5s, máx 5 min)
-      become: false
+      become: true
       become_user: admendpoint
       ansible.builtin.async_status:
         jid: "{{ install_job.ansible_job_id }}"
@@ -158,7 +158,7 @@
       when: not cpla_unit.stat.exists
 
     - name: Mostrar últimas 200 líneas del log de instalación
-      become: false
+      become: true
       become_user: admendpoint
       args:
         chdir: "{{ (install_script_abs | dirname) }}"
