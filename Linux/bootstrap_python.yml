@@ -1,5 +1,5 @@
 # bootstrap_modern_python.yml
-- hosts: linux
+- hosts: all
   gather_facts: false
   become: true
   tasks:
