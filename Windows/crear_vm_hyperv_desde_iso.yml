@@ -1,10 +1,10 @@
 ---
 - name: Crear VM en Hyper-V (cascarón + disco + ISO desde ruta compartida)
-  hosts: SMXHVCEDIS
+  hosts: localhost
   gather_facts: no
 
   vars:
-    # Hosts válidos
+    # Hosts válidos donde se permite crear VMs
     hyperv_hosts:
       - SMXFCFVB
       - SMXHVCEDIS
@@ -12,50 +12,29 @@
       - SMXHVFCBWS19
       - SMXHYPVA
 
-    # vSwitch por defecto
+    # vSwitch por defecto (se puede sobreescribir con v_switch)
     default_switch: 'LAN-Prod'
 
-    # Unidades donde pueden vivir las VMs
+    # Unidades que pueden contener las VMs (el script elegirá la que tenga más espacio)
     candidate_drives:
       - 'D'
       - 'E'
 
-    # Ruta del ISO (UNC) accesible desde los HYPER-V
-    iso_path: '\\10.138.120.15\isos\Rocky-9.6-x86_64-dvd.iso'
-
-  vars_prompt:
-    - name: hyperv_host
-      prompt: "SMXHVCEDIS"
-      private: no
-
-    - name: vm_name
-      prompt: "SMXPRE-PRUEBA"
-      private: no
-
-    - name: memory_gb
-      prompt: "16"
-      private: no
-      default: "8"
-
-    - name: cpu
-      prompt: "8"
-      private: no
-      default: "4"
-
-    - name: disk_gb
-      prompt: "50"
-      private: no
-      default: "100"
-
-    - name: v_switch
-      prompt: "Nombre del vSwitch (ENTER para usar {{ default_switch }})"
-      private: no
-      default: "{{ default_switch }}"
-
-  collections:
-    - ansible.windows
+    # Ruta del ISO por defecto (puedes sobreescribirla con iso_path)
+    iso_path_default: '\\10.138.120.15\isos\Rocky-9.6-x86_64-dvd.iso'
 
   tasks:
+
+    # Validar que vengan todas las variables desde Semaphore
+    - name: Validar variables obligatorias
+      ansible.builtin.assert:
+        that:
+          - SMXHVCEDIS
+          - SMXPRE-PRUEBA
+          - 8
+          - 4
+          - 50
+        fail_msg: "Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb (y opcionalmente v_switch, iso_path)."
 
     - name: Validar que el host elegido está en la lista
       ansible.builtin.assert:
@@ -63,12 +42,15 @@
           - hyperv_host in hyperv_hosts
         fail_msg: "El host {{ hyperv_host }} no está en la lista permitida."
 
-    - name: Calcular memoria y disco
+    - name: Normalizar variables y defaults
       ansible.builtin.set_fact:
+        v_switch_eff: "{{ v_switch | default(default_switch) }}"
+        iso_path_eff: "{{ iso_path | default(iso_path_default) }}"
         memory_bytes: "{{ (memory_gb | int) * 1073741824 }}"
         disk_bytes: "{{ (disk_gb | int) * 1073741824 }}"
+        cpu_count: "{{ cpu | int }}"
 
-    - name: Crear VM en el host seleccionado usando PowerShell (estructura, VHDX, ISO)
+    - name: Crear VM en Hyper-V (estructura, VHDX y ISO)
       ansible.windows.win_powershell:
         script: |
           param(
@@ -171,9 +153,9 @@
           VmName: "{{ vm_name }}"
           MemoryBytes: "{{ memory_bytes }}"
           DiskBytes: "{{ disk_bytes }}"
-          CpuCount: "{{ cpu | int }}"
-          SwitchName: "{{ v_switch }}"
-          IsoPath: "{{ iso_path }}"
+          CpuCount: "{{ cpu_count }}"
+          SwitchName: "{{ v_switch_eff }}"
+          IsoPath: "{{ iso_path_eff }}"
           CandidateDrives: "{{ candidate_drives }}"
       delegate_to: "{{ hyperv_host }}"
       run_once: true
