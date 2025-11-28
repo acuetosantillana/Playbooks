@@ -29,11 +29,13 @@
     - name: Validar variables obligatorias
       ansible.builtin.assert:
         that:
-          - SMXHVCEDIS
-          - SMXPRE-PRUEBA
-          - 8
-          - 4
-          - 50
+          - hyperv_host is defined
+          - vm_name is defined
+          - memory_gb is defined
+          - cpu is defined
+          - disk_gb is defined
+          - hyperv_host | length > 0
+          - vm_name | length > 0
         fail_msg: "Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb (y opcionalmente v_switch, iso_path)."
 
     - name: Validar que el host elegido está en la lista
