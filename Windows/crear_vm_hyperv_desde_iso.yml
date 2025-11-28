@@ -12,7 +12,7 @@
       - SMXHVFCBWS19
       - SMXHYPVA
 
-    # vSwitch por defecto (se puede sobreescribir con v_switch)
+    # vSwitch por defecto (si no se manda v_switch)
     default_switch: 'LAN-Prod'
 
     # Unidades que pueden contener las VMs (el script elegirá la que tenga más espacio)
@@ -20,12 +20,14 @@
       - 'D'
       - 'E'
 
-    # Ruta del ISO por defecto (puedes sobreescribirla con iso_path)
-    iso_path_default: '\\10.138.120.15\isos\Rocky-9.6-x86_64-dvd.iso'
+    # ISO por defecto (por si no te mandan iso_path; puedes cambiarla o quitarla)
+    iso_path_default: '\\SMXSTORAGE\ISO\Windows2022.iso'
+
+  collections:
+    - ansible.windows
 
   tasks:
 
-    # Validar que vengan todas las variables desde Semaphore
     - name: Validar variables obligatorias
       ansible.builtin.assert:
         that:
@@ -36,13 +38,13 @@
           - disk_gb is defined
           - hyperv_host | length > 0
           - vm_name | length > 0
-        fail_msg: "Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb (y opcionalmente v_switch, iso_path)."
+        fail_msg: "Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb."
 
-    - name: Validar que el host elegido está en la lista
+    - name: Validar que el host elegido está en la lista permitida
       ansible.builtin.assert:
         that:
           - hyperv_host in hyperv_hosts
-        fail_msg: "El host {{ hyperv_host }} no está en la lista permitida."
+        fail_msg: "El host {{ hyperv_host }} no está en la lista de hyperv_hosts permitidos."
 
     - name: Normalizar variables y defaults
       ansible.builtin.set_fact:
@@ -51,6 +53,17 @@
         memory_bytes: "{{ (memory_gb | int) * 1073741824 }}"
         disk_bytes: "{{ (disk_gb | int) * 1073741824 }}"
         cpu_count: "{{ cpu | int }}"
+
+    - name: Debug de variables (puedes comentar esta tarea si no la necesitas)
+      ansible.builtin.debug:
+        msg:
+          hyperv_host: "{{ hyperv_host }}"
+          vm_name: "{{ vm_name }}"
+          memory_gb: "{{ memory_gb }}"
+          cpu: "{{ cpu }}"
+          disk_gb: "{{ disk_gb }}"
+          v_switch: "{{ v_switch_eff }}"
+          iso_path: "{{ iso_path_eff }}"
 
     - name: Crear VM en Hyper-V (estructura, VHDX y ISO)
       ansible.windows.win_powershell:
@@ -83,10 +96,10 @@
           $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
           Write-Host "Usando unidad $($bestDrive.Name): libre $([math]::Round($bestDrive.Free / 1GB, 2)) GB"
 
-          # 2. Carpeta raíz tipo 'D:\NOMBREHOST'
-          $hostFolderName = $Env:COMPUTERNAME
-          $root        = $bestDrive.Root           # D:\
-          $clusterRoot = Join-Path $root $hostFolderName
+          # 2. Carpeta raíz tipo 'D:\NOMBRE-VM'
+          $vmFolderName = $VmName
+          $root        = $bestDrive.Root           # D:\ o E:\
+          $clusterRoot = Join-Path $root $vmFolderName
 
           # Subcarpetas estándar
           $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
@@ -100,8 +113,8 @@
           }
 
           # 3. Rutas de esta VM
-          $VmPath  = Join-Path $vmRoot $VmName
-          $VhdPath = Join-Path $vhdRoot ("{0}.vhdx" -f $VmName)
+          $VmPath  = Join-Path $vmRoot $VmName                 # ...\Virtual Machines\VMNAME\
+          $VhdPath = Join-Path $vhdRoot ("{0}.vhdx" -f $VmName) # ...\Virtual Hard Disks\VMNAME.vhdx
 
           Write-Host "Carpeta de la VM : $VmPath"
           Write-Host "Disco de la VM   : $VhdPath"
@@ -110,12 +123,17 @@
             New-Item -ItemType Directory -Path $VmPath -Force | Out-Null
           }
 
-          # 4. Crear VHDX vacío (disco dinámico)
+          # 4. Validar que la ISO exista
+          if (-not (Test-Path $IsoPath)) {
+            throw "La ISO no existe o no es accesible desde este host: $IsoPath"
+          }
+
+          # 5. Crear VHDX vacío (disco dinámico)
           if (-not (Test-Path $VhdPath)) {
             New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
           }
 
-          # 5. Crear VM si no existe
+          # 6. Crear VM si no existe
           if (-not (Get-VM -Name $VmName -ErrorAction SilentlyContinue)) {
             New-VM -Name $VmName `
                    -MemoryStartupBytes $MemoryBytes `
@@ -127,16 +145,16 @@
             Write-Host "La VM $VmName ya existe, no se vuelve a crear."
           }
 
-          # 6. CPU
+          # 7. CPU
           Set-VMProcessor -VMName $VmName -Count $CpuCount
 
-          # 7. Memoria dinámica
+          # 8. Memoria dinámica
           Set-VMMemory -VMName $VmName `
             -DynamicMemoryEnabled $true `
             -MinimumBytes 1GB `
             -MaximumBytes ($MemoryBytes * 2)
 
-          # 8. Montar ISO en la unidad de DVD
+          # 9. Montar ISO en la unidad de DVD
           $dvd = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
           if ($dvd) {
             Set-VMDvdDrive -VMName $VmName -ControllerNumber $dvd.ControllerNumber -ControllerLocation $dvd.ControllerLocation -Path $IsoPath
@@ -144,11 +162,11 @@
             Add-VMDvdDrive -VMName $VmName -Path $IsoPath | Out-Null
           }
 
-          # 9. Poner el DVD como primer dispositivo de arranque
+          # 10. Poner el DVD como primer dispositivo de arranque
           $dvd = Get-VMDvdDrive -VMName $VmName
           Set-VMFirmware -VMName $VmName -FirstBootDevice $dvd
 
-          # 10. Iniciar VM
+          # 11. Iniciar VM
           Start-VM -Name $VmName
 
         parameters:
