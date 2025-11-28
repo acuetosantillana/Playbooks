@@ -1,6 +1,6 @@
 ---
 - name: Crear VM en Hyper-V (cascarón + disco + ISO desde ruta compartida)
-  hosts: localhost
+  hosts: SMXHVCEDIS
   gather_facts: no
 
   vars:
