@@ -25,25 +25,25 @@
 
   vars_prompt:
     - name: hyperv_host
-      prompt: "¿En qué host Hyper-V quieres crear la VM? (ej. SMXHVCEDIS)"
+      prompt: "SMXHVCEDIS"
       private: no
 
     - name: vm_name
-      prompt: "Nombre de la VM"
+      prompt: "SMXPRE-PRUEBA"
       private: no
 
     - name: memory_gb
-      prompt: "Memoria en GB (ej. 8)"
+      prompt: "16"
       private: no
       default: "8"
 
     - name: cpu
-      prompt: "Número de vCPU (ej. 4)"
+      prompt: "8"
       private: no
       default: "4"
 
     - name: disk_gb
-      prompt: "Tamaño del disco en GB (ej. 100)"
+      prompt: "50"
       private: no
       default: "100"
 
