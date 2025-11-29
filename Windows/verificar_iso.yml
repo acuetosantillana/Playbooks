@@ -1,0 +1,29 @@
+---
+- name: Verificar acceso a ISO y DVD de la VM
+  hosts: hyperv_target        # grupo o host del Hyper-V (SMXHVCEDIS)
+  gather_facts: no
+  collections:
+    - ansible.windows
+
+  vars:
+    vm_name: "SMXPRE-PRUEBA"
+    iso_path: "\\\\10.138.120.15\\isos\\SERVER_EVAL_x64FRE_es-es.iso"
+
+  tasks:
+    - name: Test-Path de la ISO desde el Hyper-V
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$IsoPath)
+          Write-Host "Probando acceso a: $IsoPath"
+          try {
+            $ok = Test-Path $IsoPath -ErrorAction Stop
+            if ($ok) {
+              Write-Host "OK: ISO accesible"
+            } else {
+              Write-Host "NO: Test-Path devolvió False"
+            }
+          } catch {
+            Write-Host "ERROR: $($_.Exception.Message)"
+          }
+        parameters:
+          IsoPath: "{{ iso_path }}"
