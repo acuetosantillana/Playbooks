@@ -20,8 +20,8 @@
       - 'D'
       - 'E'
 
-    # ISO por defecto (por si no te mandan iso_path; puedes cambiarla o quitarla)
-    iso_path_default: '\\SMXSTORAGE\ISO\Windows2022.iso'
+    # ISO por defecto (usa la IP que ya validaste)
+    iso_path_default: '\\10.138.120.15\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
   collections:
     - ansible.windows
@@ -123,9 +123,24 @@
             New-Item -ItemType Directory -Path $VmPath -Force | Out-Null
           }
 
-          # 4. Validar que la ISO exista
-          if (-not (Test-Path $IsoPath)) {
-            throw "La ISO no existe o no es accesible desde este host: $IsoPath"
+          # 4. Validar acceso a la ISO (no tumbar todo si falla)
+          $isoOk = $false
+          if ($IsoPath -and $IsoPath.Trim() -ne '') {
+            try {
+              $isoOk = Test-Path $IsoPath -ErrorAction Stop
+              Write-Host "ISO accesible: $IsoPath (Test-Path = $isoOk)"
+            } catch {
+              Write-Host "ADVERTENCIA: No se pudo acceder a la ISO: $IsoPath"
+              Write-Host "Detalle: $($_.Exception.Message)"
+              $isoOk = $false
+            }
+          } else {
+            Write-Host "ADVERTENCIA: No se especificó ruta de ISO."
+          }
+
+          if (-not $isoOk) {
+            Write-Host "Continuando sin montar ISO en la VM."
+            $IsoPath = $null
           }
 
           # 5. Crear VHDX vacío (disco dinámico)
@@ -154,17 +169,28 @@
             -MinimumBytes 1GB `
             -MaximumBytes ($MemoryBytes * 2)
 
-          # 9. Montar ISO en la unidad de DVD
-          $dvd = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
-          if ($dvd) {
-            Set-VMDvdDrive -VMName $VmName -ControllerNumber $dvd.ControllerNumber -ControllerLocation $dvd.ControllerLocation -Path $IsoPath
-          } else {
-            Add-VMDvdDrive -VMName $VmName -Path $IsoPath | Out-Null
-          }
+          # 9. Montar ISO en la unidad de DVD (si hay ruta válida)
+          if ($IsoPath) {
+            try {
+              $dvd = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
+              if ($dvd) {
+                Set-VMDvdDrive -VMName $VmName `
+                  -ControllerNumber $dvd.ControllerNumber `
+                  -ControllerLocation $dvd.ControllerLocation `
+                  -Path $IsoPath -ErrorAction Stop
+              } else {
+                Add-VMDvdDrive -VMName $VmName -Path $IsoPath -ErrorAction Stop | Out-Null
+              }
 
-          # 10. Poner el DVD como primer dispositivo de arranque
-          $dvd = Get-VMDvdDrive -VMName $VmName
-          Set-VMFirmware -VMName $VmName -FirstBootDevice $dvd
+              # 10. Poner el DVD como primer dispositivo de arranque
+              $dvd = Get-VMDvdDrive -VMName $VmName
+              Set-VMFirmware -VMName $VmName -FirstBootDevice $dvd
+            } catch {
+              Write-Host "ADVERTENCIA: Error al montar la ISO en la VM $VmName: $($_.Exception.Message)"
+            }
+          } else {
+            Write-Host "No se montó ninguna ISO en la VM (IsoPath nulo o inaccesible)."
+          }
 
           # 11. Iniciar VM
           Start-VM -Name $VmName
