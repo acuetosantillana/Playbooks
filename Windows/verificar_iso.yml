@@ -1,29 +1,67 @@
 ---
-- name: Verificar acceso a ISO y DVD de la VM
-  hosts: hyperv_target        # grupo o host del Hyper-V (SMXHVCEDIS)
+- name: Verificar acceso a ISO y estado del DVD en la VM
+  hosts: SMXHVCEDIS                # Grupo destino en tu inventario
   gather_facts: no
   collections:
     - ansible.windows
 
   vars:
-    vm_name: "SMXPRE-PRUEBA"
-    iso_path: "\\\\10.138.120.15\\isos\\SERVER_EVAL_x64FRE_es-es.iso"
+    vm_name: "SMXPRE-PRUEBA"        # Cambia el nombre de la VM
+    iso_path: "\\\\10.138.120.15\\isos\\SERVER_EVAL_x64FRE_es-es.iso"   # Ruta que quieres validar
 
   tasks:
-    - name: Test-Path de la ISO desde el Hyper-V
+
+    - name: Mostrar usuario que está ejecutando el script
+      ansible.windows.win_powershell:
+        script: |
+          whoami
+
+    - name: Probar acceso a ISO con Test-Path desde el Hyper-V
       ansible.windows.win_powershell:
         script: |
           param([string]$IsoPath)
-          Write-Host "Probando acceso a: $IsoPath"
+          Write-Host "Probando acceso al ISO: $IsoPath"
           try {
-            $ok = Test-Path $IsoPath -ErrorAction Stop
-            if ($ok) {
-              Write-Host "OK: ISO accesible"
+            $exists = Test-Path $IsoPath -ErrorAction Stop
+            if ($exists) {
+              Write-Host "RESULTADO: OK - La ISO es accesible desde este Hyper-V."
             } else {
-              Write-Host "NO: Test-Path devolvió False"
+              Write-Host "RESULTADO: ERROR - Test-Path devolvió FALSE."
             }
           } catch {
-            Write-Host "ERROR: $($_.Exception.Message)"
+            Write-Host "RESULTADO: ERROR - No se pudo acceder a la ISO."
+            Write-Host "Detalle: $($_.Exception.Message)"
           }
         parameters:
           IsoPath: "{{ iso_path }}"
+      register: iso_test
+
+    - name: Mostrar resultado de Test-Path
+      debug:
+        var: iso_test.output
+
+    - name: Verificar unidad de DVD de la VM
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$VmName)
+
+          if (-not (Get-VM -Name $VmName -ErrorAction SilentlyContinue)) {
+            Write-Host "ERROR: La VM $VmName no existe en este Hyper-V."
+            return
+          }
+
+          $dvd = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
+
+          if (-not $dvd) {
+            Write-Host "DVD: La VM $VmName NO tiene unidad de DVD configurada."
+          } else {
+            Write-Host "DVD: Unidad encontrada."
+            Write-Host "DVD Path: $($dvd.Path)"
+          }
+        parameters:
+          VmName: "{{ vm_name }}"
+      register: dvd_info
+
+    - name: Resultado DVD
+      debug:
+        var: dvd_info.output
