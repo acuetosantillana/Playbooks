@@ -20,8 +20,16 @@
       - 'D'
       - 'E'
 
-    # ISO por defecto (ruta que ya validaste por IP)
+    # Share donde están las ISOs (solo carpeta)
+    iso_share_root: '\\10.138.120.15\isos'
+
+    # ISO por defecto (archivo dentro del share)
     iso_path_default: '\\10.138.120.15\isos\SERVER_EVAL_x64FRE_es-es.iso'
+
+    # Usuario y password para acceder al share desde Hyper-V (para SmbGlobalMapping)
+    # DEFINIR ESTO EN SEMAPHORE, NO EN PLANO
+    iso_share_user: "{{ iso_user | default(omit) }}"
+    iso_share_password: "{{ iso_password | default(omit) }}"
 
   collections:
     - ansible.windows
@@ -64,6 +72,58 @@
           disk_gb: "{{ disk_gb }}"
           v_switch: "{{ v_switch_eff }}"
           iso_path: "{{ iso_path_eff }}"
+          iso_share_root: "{{ iso_share_root }}"
+
+    #################################################################
+    # PREP: Configurar mapeo SMB global para que Hyper-V use credenciales
+    #################################################################
+
+    - name: Configurar SMB Global Mapping para el share de ISOs en el Hyper-V
+      ansible.windows.win_powershell:
+        script: |
+          param(
+            [string]$ShareRoot,
+            [string]$UserName,
+            [string]$PlainPassword
+          )
+
+          Write-Host "Configurando SmbGlobalMapping para $ShareRoot"
+
+          try {
+            Import-Module SmbShare -ErrorAction Stop
+          } catch {
+            Write-Host "ADVERTENCIA: No se pudo importar módulo SmbShare: $($_.Exception.Message)"
+          }
+
+          if (-not $UserName -or -not $PlainPassword) {
+            Write-Host "ADVERTENCIA: No se especificaron credenciales para el share. Se intentará acceso directo."
+            return
+          }
+
+          try {
+            # Eliminar mapping previo si existe
+            Remove-SmbGlobalMapping -RemotePath $ShareRoot -Force -ErrorAction SilentlyContinue
+          } catch {
+            Write-Host "ADVERTENCIA: No se pudo eliminar mapping previo: $($_.Exception.Message)"
+          }
+
+          try {
+            $sec = ConvertTo-SecureString $PlainPassword -AsPlainText -Force
+            New-SmbGlobalMapping -RemotePath $ShareRoot -UserName $UserName -Password $sec -ErrorAction Stop | Out-Null
+            Write-Host "SmbGlobalMapping creado correctamente para $ShareRoot con usuario $UserName."
+          } catch {
+            Write-Host ("ADVERTENCIA: Error al crear SmbGlobalMapping para {0}: {1}" -f $ShareRoot, $_.Exception.Message)
+          }
+        parameters:
+          ShareRoot: "{{ iso_share_root }}"
+          UserName: "{{ iso_share_user | default('') }}"
+          PlainPassword: "{{ iso_share_password | default('') }}"
+      delegate_to: "{{ hyperv_host }}"
+      run_once: true
+
+    #################################################################
+    # CREACIÓN DE LA VM
+    #################################################################
 
     - name: Crear VM en Hyper-V (estructura, VHDX y ISO)
       ansible.windows.win_powershell:
