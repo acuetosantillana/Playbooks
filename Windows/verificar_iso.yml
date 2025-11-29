@@ -1,23 +1,95 @@
+---
 - name: Validar acceso al ISO desde Hyper-V
-  hosts: SMXHVCEDIS
+  hosts: hyperv_test         # grupo hacia SMXHVCEDIS
   gather_facts: no
   collections:
     - ansible.windows
 
   vars:
-    iso_path: "\\\\SMXFILES\\isos\\SERVER_EVAL_x64FRE_es-es.iso"
+    vm_name: "SMXPRE-PRUEBA"
+
+    # Ajusta estos dos según tu realidad
+    iso_server_name: "SMXFILES"         # nombre de 10.138.120.15 (o el que sea)
+    iso_server_ip: "10.138.120.15"
+    iso_share: "isos"
+    iso_file: "SERVER_EVAL_x64FRE_es-es.iso"
 
   tasks:
-    - name: Test-Path desde Hyper-V
+
+    - name: Mostrar usuario que ejecuta Ansible en el Hyper-V
       ansible.windows.win_powershell:
         script: |
-          param([string]$IsoPath)
+          Write-Host "whoami:"
           whoami
+      register: whoami_out
+
+    - debug:
+        var: whoami_out.output
+
+    - name: Probar acceso a carpeta e ISO por NOMBRE de servidor
+      ansible.windows.win_powershell:
+        script: |
+          param($ServerName, $Share, $File)
+
+          $root = "\\$ServerName\$Share"
+          $full = Join-Path $root $File
+
+          Write-Host "== Probando por NOMBRE =="
+          Write-Host "Carpeta : $root"
+          Write-Host "Archivo : $full"
+
           try {
-            $ok = Test-Path $IsoPath -ErrorAction Stop
-            Write-Host "Test-Path: $ok"
+            $rootOk = Test-Path $root -ErrorAction Stop
+            Write-Host "Test-Path carpeta: $rootOk"
           } catch {
-            Write-Host "ERROR: $($_.Exception.Message)"
+            Write-Host "ERROR carpeta: $($_.Exception.Message)"
+          }
+
+          try {
+            $fileOk = Test-Path $full -ErrorAction Stop
+            Write-Host "Test-Path archivo: $fileOk"
+          } catch {
+            Write-Host "ERROR archivo: $($_.Exception.Message)"
           }
         parameters:
-          IsoPath: "{{ iso_path }}"
+          ServerName: "{{ iso_server_name }}"
+          Share: "{{ iso_share }}"
+          File: "{{ iso_file }}"
+      register: name_test
+
+    - debug:
+        var: name_test.output
+
+    - name: Probar acceso a carpeta e ISO por IP
+      ansible.windows.win_powershell:
+        script: |
+          param($ServerIp, $Share, $File)
+
+          $root = "\\$ServerIp\$Share"
+          $full = Join-Path $root $File
+
+          Write-Host "== Probando por IP =="
+          Write-Host "Carpeta : $root"
+          Write-Host "Archivo : $full"
+
+          try {
+            $rootOk = Test-Path $root -ErrorAction Stop
+            Write-Host "Test-Path carpeta: $rootOk"
+          } catch {
+            Write-Host "ERROR carpeta: $($_.Exception.Message)"
+          }
+
+          try {
+            $fileOk = Test-Path $full -ErrorAction Stop
+            Write-Host "Test-Path archivo: $fileOk"
+          } catch {
+            Write-Host "ERROR archivo: $($_.Exception.Message)"
+          }
+        parameters:
+          ServerIp: "{{ iso_server_ip }}"
+          Share: "{{ iso_share }}"
+          File: "{{ iso_file }}"
+      register: ip_test
+
+    - debug:
+        var: ip_test.output
