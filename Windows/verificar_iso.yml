@@ -1,6 +1,6 @@
 ---
 - name: Validar acceso al ISO desde Hyper-V
-  hosts: hyperv_test         # grupo hacia SMXHVCEDIS
+  hosts: SMXHVCEDIS         # grupo hacia SMXHVCEDIS
   gather_facts: no
   collections:
     - ansible.windows
