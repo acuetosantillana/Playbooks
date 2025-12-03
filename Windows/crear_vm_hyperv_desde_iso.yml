@@ -117,7 +117,7 @@
           }
 
           # 3. Rutas finales 
-          $VmPath  = Join-Path $vmRoot        
+          $VmPath  = Join-Path $clusterRoot        
           $VhdPath = Join-Path $vhdRoot ("{0}.vhdx" -f $VmName)     # D:\NOMBRE-VM\Virtual Hard Disks\NOMBRE-VM.vhdx
 
           Write-Host "Carpeta base de la VM : $VmPath"
