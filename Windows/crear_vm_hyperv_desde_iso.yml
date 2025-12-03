@@ -29,8 +29,8 @@
     # Datos de la NAS (para el SMB Global Mapping)
     nas_server: '10.138.120.130'
     nas_share: 'isos'
-    nas_user: 'NASUSER_AQUI'
-    nas_pass: 'NASPASS_AQUI'
+    nas_user: 'NASUSER_AQUI'   # se usará si NO mandas iso_user
+    nas_pass: 'NASPASS_AQUI'   # se usará si NO mandas iso_password
 
   tasks:
 
@@ -95,8 +95,9 @@
         parameters:
           Server: "{{ nas_server }}"
           Share: "{{ nas_share }}"
-          User: "{{ nas_user }}"
-          Pass: "{{ nas_pass }}"
+          # 👇 aquí el cambio importante: usa iso_user/iso_password si vienen en extra_vars
+          User: "{{ iso_user | default(nas_user) }}"
+          Pass: "{{ iso_password | default(nas_pass) }}"
       delegate_to: "{{ hyperv_host }}"
       run_once: true
 
