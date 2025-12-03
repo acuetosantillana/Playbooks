@@ -157,24 +157,24 @@
           Write-Host "Usando unidad $($bestDrive.Name): libre $([math]::Round($bestDrive.Free / 1GB, 2)) GB"
 
           # 2. Carpeta raíz tipo 'D:\NOMBRE-VM'
-          $vmFolderName = $VmName
           $root        = $bestDrive.Root           # D:\ o E:\
-          $clusterRoot = Join-Path $root $vmFolderName
+          $clusterRoot = Join-Path $root $VmName   # D:\SMXPRE-PRUEBA
 
           # Subcarpetas estándar
-          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
-          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"
-          $vmRoot        = Join-Path $clusterRoot "Virtual Machines"
+          $vmRoot        = Join-Path $clusterRoot "Virtual Machines"    # D:\SMXPRE-PRUEBA\Virtual Machines
+          $vmFilesPath   = Join-Path $vmRoot "Files"                    # D:\SMXPRE-PRUEBA\Virtual Machines\
+          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"  # D:\SMXPRE-PRUEBA\Virtual Hard Disks
+          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"           # D:\SMXPRE-PRUEBA\Snapshots
 
-          foreach ($p in @($clusterRoot, $snapshotsRoot, $vhdRoot, $vmRoot)) {
-            if (-not (Test-Path $p)) {
-              New-Item -ItemType Directory -Path $p -Force | Out-Null
+          foreach ($p in @($clusterRoot, $vmRoot, $vmFilesPath, $vhdRoot, $snapshotsRoot)) {
+          if (-not (Test-Path $p)) {
+          New-Item -ItemType Directory -Path $p -Force | Out-Null
             }
           }
 
           # 3. Rutas de esta VM
-          $VmPath  = Join-Path $vmRoot $VmName                 # ...\Virtual Machines\VMNAME\
-          $VhdPath = Join-Path $vhdRoot ("{0}.vhdx" -f $VmName) # ...\Virtual Hard Disks\VMNAME.vhdx
+          $VmPath  = $vmFilesPath                                      # D:\SMXPRE-PRUEBA\Virtual Machines\
+          $VhdPath = Join-Path $vhdRoot ("{0}.vhdx" -f $VmName)        # D:\SMXPRE-PRUEBA\Virtual Hard Disks\SMXPRE-PRUEBA.vhdx
 
           Write-Host "Carpeta de la VM : $VmPath"
           Write-Host "Disco de la VM   : $VhdPath"
