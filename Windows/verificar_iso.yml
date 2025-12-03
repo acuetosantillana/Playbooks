@@ -10,7 +10,7 @@
 
     # Ajusta estos dos según tu realidad
     iso_server_name: "SMXFILES"         # nombre de 10.138.120.15 (o el que sea)
-    iso_server_ip: "10.138.120.15"
+    iso_server_ip: "10.138.120.130"
     iso_share: "isos"
     iso_file: "SERVER_EVAL_x64FRE_es-es.iso"
 
