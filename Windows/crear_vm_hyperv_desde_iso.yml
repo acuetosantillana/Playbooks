@@ -146,16 +146,18 @@
           $root        = $bestDrive.Root              # D:\ o E:\
           $clusterRoot = Join-Path $root $VmName      # D:\SMXPRE-PRUEBA
 
-          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"
-          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
+          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"           # D:\SMXPRE-PRUEBA\Snapshots
+          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"  # D:\SMXPRE-PRUEBA\Virtual Hard Disks
+          $vmRoot        = Join-Path $clusterRoot "Virtual Machines"    # D:\SMXPRE-PRUEBA\Virtual Machines
 
-          $VmPath = $clusterRoot   # raíz que usará Hyper-V
-
-          foreach ($p in @($clusterRoot, $vhdRoot, $snapshotsRoot)) {
-            if (-not (Test-Path $p)) {
-              New-Item -ItemType Directory -Path $p -Force | Out-Null
+          foreach ($p in @($clusterRoot, $snapshotsRoot, $vhdRoot, $vmRoot)) {
+          if (-not (Test-Path $p)) {
+          New-Item -ItemType Directory -Path $p -Force | Out-Null
             }
           }
+
+          $VmPath  = $vmRoot                                        # D:\SMXPRE-PRUEBA\Virtual Machines
+          $VhdPath = Join-Path $vhdRoot ("{0}.vhdx" -f $VmName)     # D:\SMXPRE-PRUEBA\Virtual Hard Disks\SMXPRE-PRUEBA.vhdx
 
           ##################################################################
           # 3. Rutas de esta VM
