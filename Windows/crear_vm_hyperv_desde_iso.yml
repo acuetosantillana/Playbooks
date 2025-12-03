@@ -108,7 +108,6 @@
           # Subcarpetas estándar dentro de D:\NOMBRE-VM\
           $snapshotsRoot = Join-Path $clusterRoot "Snapshots"           # D:\NOMBRE-VM\Snapshots
           $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"  # D:\NOMBRE-VM\Virtual Hard Disks
-          $vmRoot        = Join-Path $clusterRoot "Virtual Machines"    # D:\NOMBRE-VM\Virtual Machines
 
           foreach ($p in @($clusterRoot, $snapshotsRoot, $vhdRoot, $vmRoot)) {
             if (-not (Test-Path $p)) {
@@ -117,7 +116,7 @@
           }
 
           # 3. Rutas finales
-          $VmPath  = $vmRoot                                        # D:\NOMBRE-VM\Virtual Machines
+          $VmPath  =  $clusterRoot                                  
           $VhdPath = Join-Path $vhdRoot ("{0}.vhdx" -f $VmName)     # D:\NOMBRE-VM\Virtual Hard Disks\NOMBRE-VM.vhdx
 
           Write-Host "Carpeta base de la VM : $VmPath"
