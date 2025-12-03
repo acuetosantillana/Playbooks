@@ -1,7 +1,10 @@
 ---
-- name: Crear VM en Hyper-V (cascarón + disco + ISO desde ruta compartida con autenticación)
+- name: Crear VM en Hyper-V (cascarón + disco + ISO desde ruta compartida)
   hosts: localhost
   gather_facts: no
+
+  collections:
+    - ansible.windows
 
   vars:
     # Hosts válidos donde se permite crear VMs
@@ -12,26 +15,23 @@
       - SMXHVFCBWS19
       - SMXHYPVA
 
-    # vSwitch por defecto (si no se manda v_switch)
+    # vSwitch por defecto si no se manda v_switch
     default_switch: 'LAN-Prod'
 
-    # Unidades que pueden contener las VMs (el script elegirá la que tenga más espacio)
+    # Unidades donde se pueden guardar las VMs
     candidate_drives:
       - 'D'
       - 'E'
 
-    # ISO por defecto (ajusta si quieres otro)
+    # ISO por defecto (puedes cambiarla o dejar que siempre llegue por variable)
     iso_path_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
-  collections:
-    - ansible.windows
-
   tasks:
-    #################################################################
-    # VALIDACIÓN
-    #################################################################
 
-    - name: Validar variables obligatorias, incluyendo credenciales de ISO
+    # -----------------------------------------------------------------------
+    # Validaciones de variables que vienen desde Semaphore
+    # -----------------------------------------------------------------------
+    - name: Validar variables obligatorias
       ansible.builtin.assert:
         that:
           - hyperv_host is defined
@@ -39,12 +39,9 @@
           - memory_gb is defined
           - cpu is defined
           - disk_gb is defined
-          - iso_path is defined or iso_path_default is defined
-          - iso_user is defined
-          - iso_password is defined
           - hyperv_host | length > 0
           - vm_name | length > 0
-        fail_msg: "Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb, iso_user, iso_password."
+        fail_msg: "Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb."
 
     - name: Validar que el host elegido está en la lista permitida
       ansible.builtin.assert:
@@ -59,10 +56,8 @@
         memory_bytes: "{{ (memory_gb | int) * 1073741824 }}"
         disk_bytes: "{{ (disk_gb | int) * 1073741824 }}"
         cpu_count: "{{ cpu | int }}"
-        iso_user_eff: "{{ iso_user }}"
-        iso_password_eff: "{{ iso_password }}"
 
-    - name: Debug de variables
+    - name: Debug de variables (puedes comentar esta tarea si ya no la necesitas)
       ansible.builtin.debug:
         msg:
           hyperv_host: "{{ hyperv_host }}"
@@ -72,12 +67,11 @@
           disk_gb: "{{ disk_gb }}"
           v_switch: "{{ v_switch_eff }}"
           iso_path: "{{ iso_path_eff }}"
-          iso_user: "{{ iso_user_eff }}"
+          iso_user: "{{ iso_user | default('') }}"
 
-    #################################################################
-    # CREACIÓN DE VM EN HYPER-V
-    #################################################################
-
+    # -----------------------------------------------------------------------
+    # Creación de VM en el host Hyper-V seleccionado
+    # -----------------------------------------------------------------------
     - name: Crear VM en Hyper-V (estructura, VHDX y ISO)
       ansible.windows.win_powershell:
         script: |
@@ -87,46 +81,17 @@
             [Int64]$DiskBytes,
             [int]$CpuCount,
             [string]$SwitchName,
-            [string]$IsoPath,
-            [string[]]$CandidateDrives,
-            [string]$IsoUser,
-            [string]$IsoPassword
+            [string]$IsoPath,         # \\servidor\share\archivo.iso
+            [string]$IsoUser,         # usuario del share (opcional)
+            [string]$IsoPassword,     # contraseña (opcional)
+            [string[]]$CandidateDrives
           )
 
           Import-Module Hyper-V
 
-          ##################################################################
-          # 0. Intentar mapear el share de la ISO con credenciales (PSDrive)
-          ##################################################################
-          if ($IsoUser -and $IsoPassword) {
-            try {
-              $shareRoot = Split-Path -Path $IsoPath -Parent   # \\10.138.120.130\isos
-              $sec = ConvertTo-SecureString $IsoPassword -AsPlainText -Force
-              $cred = New-Object System.Management.Automation.PSCredential($IsoUser, $sec)
-
-              # Intento crear un PSDrive temporal (nombre IZ para no chocar)
-              if (-not (Get-PSDrive -Name 'IZ' -ErrorAction SilentlyContinue)) {
-                New-PSDrive -Name 'IZ' -PSProvider FileSystem -Root $shareRoot -Credential $cred -ErrorAction Stop | Out-Null
-                Write-Host "PSDrive IZ: creado para $shareRoot con usuario $IsoUser"
-              } else {
-                Write-Host "PSDrive IZ: ya existe, se reutiliza."
-              }
-            } catch {
-              Write-Host ("ADVERTENCIA: No se pudo crear PSDrive para la ISO ({0}): {1}" -f $IsoPath, $_.Exception.Message)
-            }
-          } else {
-            Write-Host "ADVERTENCIA: No se especificaron credenciales de ISO. Se intentará acceso directo."
-          }
-
-          ##################################################################
           # 1. Elegir la unidad con más espacio libre (D o E)
-          ##################################################################
           $drives = foreach ($d in $CandidateDrives) {
-            try {
-              Get-PSDrive -Name $d -ErrorAction Stop
-            } catch {
-              $null
-            }
+            try { Get-PSDrive -Name $d -ErrorAction Stop } catch { $null }
           }
 
           if (-not $drives) {
@@ -136,69 +101,64 @@
           $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
           Write-Host "Usando unidad $($bestDrive.Name): libre $([math]::Round($bestDrive.Free / 1GB, 2)) GB"
 
-          ##################################################################
-          # 2. Estructura de carpetas
-          #    D:\VMNAME\
-          #      Snapshots\
-          #      Virtual Hard Disks\
-          #      Virtual Machines\ (la parte GUID la crea Hyper-V)
-          ##################################################################
-          $root        = $bestDrive.Root              # D:\ o E:\
-          $clusterRoot = Join-Path $root $VmName      # D:\SMXPRE-PRUEBA
+          # 2. Carpeta raíz tipo 'D:\NOMBRE-VM'
+          $root        = $bestDrive.Root             # D:\ o E:\
+          $clusterRoot = Join-Path $root $VmName     # D:\SMXPRE-PRUEBA
 
-          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"           # D:\SMXPRE-PRUEBA\Snapshots
-          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"  # D:\SMXPRE-PRUEBA\Virtual Hard Disks
-          $vmRoot        = Join-Path $clusterRoot "Virtual Machines"    # D:\SMXPRE-PRUEBA\Virtual Machines
+          # Subcarpetas estándar dentro de D:\NOMBRE-VM\
+          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"           # D:\NOMBRE-VM\Snapshots
+          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"  # D:\NOMBRE-VM\Virtual Hard Disks
+          $vmRoot        = Join-Path $clusterRoot "Virtual Machines"    # D:\NOMBRE-VM\Virtual Machines
 
           foreach ($p in @($clusterRoot, $snapshotsRoot, $vhdRoot, $vmRoot)) {
-          if (-not (Test-Path $p)) {
-          New-Item -ItemType Directory -Path $p -Force | Out-Null
+            if (-not (Test-Path $p)) {
+              New-Item -ItemType Directory -Path $p -Force | Out-Null
             }
           }
 
-          $VmPath  = $vmRoot                                        # D:\SMXPRE-PRUEBA\Virtual Machines
-          $VhdPath = Join-Path $vhdRoot ("{0}.vhdx" -f $VmName)     # D:\SMXPRE-PRUEBA\Virtual Hard Disks\SMXPRE-PRUEBA.vhdx
-
-          ##################################################################
-          # 3. Rutas de esta VM
-          ##################################################################
-          $VhdPath = Join-Path $vhdRoot ("{0}.vhdx" -f $VmName)
+          # 3. Rutas finales
+          $VmPath  = $vmRoot                                        # D:\NOMBRE-VM\Virtual Machines
+          $VhdPath = Join-Path $vhdRoot ("{0}.vhdx" -f $VmName)     # D:\NOMBRE-VM\Virtual Hard Disks\NOMBRE-VM.vhdx
 
           Write-Host "Carpeta base de la VM : $VmPath"
           Write-Host "Disco de la VM        : $VhdPath"
 
-          ##################################################################
-          # 4. Validar acceso a la ISO
-          ##################################################################
-          $isoOk = $false
-          if ($IsoPath -and $IsoPath.Trim() -ne '') {
+          # 4. Preparar ruta efectiva de ISO (con o sin credenciales)
+          $effectiveIsoPath = $IsoPath
+
+          if ($IsoPath -and $IsoPath.Trim() -ne '' -and $IsoUser -and $IsoPassword) {
+
+            $shareRoot = Split-Path $IsoPath -Parent   # \\servidor\isos
+            $fileName  = Split-Path $IsoPath -Leaf     # archivo.iso
+
+            Write-Host "Creando sesión SMB a $shareRoot con el usuario $IsoUser"
+
             try {
-              $isoOk = Test-Path $IsoPath -ErrorAction Stop
-              Write-Host "ISO accesible: $IsoPath (Test-Path = $isoOk)"
+              # Convertir password
+              $sec  = ConvertTo-SecureString $IsoPassword -AsPlainText -Force
+
+              # Limpiar mapeo previo X:
+              try {
+                Remove-SmbMapping -LocalPath "X:" -Force -ErrorAction SilentlyContinue | Out-Null
+              } catch { }
+
+              New-SmbMapping -LocalPath "X:" -RemotePath $shareRoot -UserName $IsoUser -Password $IsoPassword -Persistent:$false -ErrorAction Stop | Out-Null
+
+              $effectiveIsoPath = "X:\$fileName"
+              Write-Host "ISO efectiva (mapeada): $effectiveIsoPath"
             } catch {
-              Write-Host "ADVERTENCIA: No se pudo acceder a la ISO: $IsoPath"
-              Write-Host ("Detalle: {0}" -f $_.Exception.Message)
-              $isoOk = $false
+              throw "No se pudo establecer la sesión SMB para la ISO ($IsoPath) con las credenciales proporcionadas: $($_.Exception.Message)"
             }
           } else {
-            Write-Host "ADVERTENCIA: No se especificó ruta de ISO."
+            Write-Host "Usando ruta de ISO sin credenciales adicionales: $IsoPath"
           }
 
-          if (-not $isoOk) {
-            Write-Host "Continuando sin montar ISO en la VM."
-            $IsoPath = $null
-          }
-
-          ##################################################################
-          # 5. Crear VHDX vacío (disco dinámico)
-          ##################################################################
+          # 5. Crear VHDX vacío (dinámico)
           if (-not (Test-Path $VhdPath)) {
             New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
           }
 
-          ##################################################################
           # 6. Crear VM si no existe
-          ##################################################################
           if (-not (Get-VM -Name $VmName -ErrorAction SilentlyContinue)) {
             New-VM -Name $VmName `
                    -MemoryStartupBytes $MemoryBytes `
@@ -210,43 +170,35 @@
             Write-Host "La VM $VmName ya existe, no se vuelve a crear."
           }
 
-          ##################################################################
-          # 7. CPU y memoria
-          ##################################################################
+          # 7. Configurar CPU
           Set-VMProcessor -VMName $VmName -Count $CpuCount
 
+          # 8. Memoria dinámica
           Set-VMMemory -VMName $VmName `
             -DynamicMemoryEnabled $true `
             -MinimumBytes 1GB `
             -MaximumBytes ($MemoryBytes * 2)
 
-          ##################################################################
-          # 8. Montar ISO en la unidad de DVD (si hay ruta válida)
-          ##################################################################
-          if ($IsoPath) {
-            try {
-              $dvd = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
-              if ($dvd) {
-                Set-VMDvdDrive -VMName $VmName `
-                  -ControllerNumber $dvd.ControllerNumber `
-                  -ControllerLocation $dvd.ControllerLocation `
-                  -Path $IsoPath -ErrorAction Stop
-              } else {
-                Add-VMDvdDrive -VMName $VmName -Path $IsoPath -ErrorAction Stop | Out-Null
-              }
-
-              $dvd = Get-VMDvdDrive -VMName $VmName
-              Set-VMFirmware -VMName $VmName -FirstBootDevice $dvd
-            } catch {
-              Write-Host ("ADVERTENCIA: Error al montar la ISO en la VM {0}: {1}" -f $VmName, $_.Exception.Message)
+          # 9. Montar ISO en la unidad de DVD (si tenemos ruta efectiva)
+          if ($effectiveIsoPath -and $effectiveIsoPath.Trim() -ne '') {
+            $dvd = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
+            if ($dvd) {
+              Set-VMDvdDrive -VMName $VmName `
+                -ControllerNumber $dvd.ControllerNumber `
+                -ControllerLocation $dvd.ControllerLocation `
+                -Path $effectiveIsoPath
+            } else {
+              Add-VMDvdDrive -VMName $VmName -Path $effectiveIsoPath | Out-Null
             }
+
+            # 10. Poner el DVD como primer dispositivo de arranque
+            $dvd = Get-VMDvdDrive -VMName $VmName
+            Set-VMFirmware -VMName $VmName -FirstBootDevice $dvd
           } else {
-            Write-Host "No se montó ninguna ISO en la VM (IsoPath nulo o inaccesible)."
+            Write-Host "ADVERTENCIA: No se montó ISO porque no se obtuvo una ruta efectiva."
           }
 
-          ##################################################################
-          # 9. Iniciar VM
-          ##################################################################
+          # 11. Iniciar VM
           Start-VM -Name $VmName
 
         parameters:
@@ -256,8 +208,8 @@
           CpuCount: "{{ cpu_count }}"
           SwitchName: "{{ v_switch_eff }}"
           IsoPath: "{{ iso_path_eff }}"
+          IsoUser: "{{ iso_user | default('') }}"
+          IsoPassword: "{{ iso_password | default('') }}"
           CandidateDrives: "{{ candidate_drives }}"
-          IsoUser: "{{ iso_user_eff }}"
-          IsoPassword: "{{ iso_password_eff }}"
       delegate_to: "{{ hyperv_host }}"
       run_once: true
