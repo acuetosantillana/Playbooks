@@ -20,21 +20,17 @@
       - 'D'
       - 'E'
 
-    # Share donde están las ISOs (solo carpeta)
-    iso_share_root: '\\10.138.120.130\isos'
-
-    # ISO por defecto (archivo dentro del share)
-    iso_path_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'
-
-    # Usuario y password para acceder al share desde Hyper-V (para SmbGlobalMapping)
-    # DEFINIR ESTO EN SEMAPHORE, NO EN PLANO
-    iso_share_user: "{{ iso_user | default(omit) }}"
-    iso_share_password: "{{ iso_password | default(omit) }}"
+    # ISO por defecto (la que ya probaste por IP)
+    iso_path_default: '\\10.138.120.15\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
   collections:
     - ansible.windows
 
   tasks:
+
+    #################################################################
+    # VALIDACIÓN DE VARIABLES
+    #################################################################
 
     - name: Validar variables obligatorias
       ansible.builtin.assert:
@@ -62,7 +58,7 @@
         disk_bytes: "{{ (disk_gb | int) * 1073741824 }}"
         cpu_count: "{{ cpu | int }}"
 
-    - name: Debug de variables (puedes comentar esta tarea si no la necesitas)
+    - name: Debug de variables (puedes comentarla si no la necesitas)
       ansible.builtin.debug:
         msg:
           hyperv_host: "{{ hyperv_host }}"
@@ -72,57 +68,9 @@
           disk_gb: "{{ disk_gb }}"
           v_switch: "{{ v_switch_eff }}"
           iso_path: "{{ iso_path_eff }}"
-          iso_share_root: "{{ iso_share_root }}"
 
     #################################################################
-    # PREP: Configurar mapeo SMB global para que Hyper-V use credenciales
-    #################################################################
-
-    - name: Configurar SMB Global Mapping para el share de ISOs en el Hyper-V
-      ansible.windows.win_powershell:
-        script: |
-          param(
-            [string]$ShareRoot,
-            [string]$UserName,
-            [string]$PlainPassword
-          )
-
-          Write-Host "Configurando SmbGlobalMapping para $ShareRoot"
-
-          try {
-            Import-Module SmbShare -ErrorAction Stop
-          } catch {
-            Write-Host "ADVERTENCIA: No se pudo importar módulo SmbShare: $($_.Exception.Message)"
-          }
-
-          if (-not $UserName -or -not $PlainPassword) {
-            Write-Host "ADVERTENCIA: No se especificaron credenciales para el share. Se intentará acceso directo."
-            return
-          }
-
-          try {
-            # Eliminar mapping previo si existe
-            Remove-SmbGlobalMapping -RemotePath $ShareRoot -Force -ErrorAction SilentlyContinue
-          } catch {
-            Write-Host "ADVERTENCIA: No se pudo eliminar mapping previo: $($_.Exception.Message)"
-          }
-
-          try {
-            $sec = ConvertTo-SecureString $PlainPassword -AsPlainText -Force
-            New-SmbGlobalMapping -RemotePath $ShareRoot -UserName $UserName -Password $sec -ErrorAction Stop | Out-Null
-            Write-Host "SmbGlobalMapping creado correctamente para $ShareRoot con usuario $UserName."
-          } catch {
-            Write-Host ("ADVERTENCIA: Error al crear SmbGlobalMapping para {0}: {1}" -f $ShareRoot, $_.Exception.Message)
-          }
-        parameters:
-          ShareRoot: "{{ iso_share_root }}"
-          UserName: "{{ iso_share_user | default('') }}"
-          PlainPassword: "{{ iso_share_password | default('') }}"
-      delegate_to: "{{ hyperv_host }}"
-      run_once: true
-
-    #################################################################
-    # CREACIÓN DE LA VM
+    # CREACIÓN DE VM EN HYPER-V
     #################################################################
 
     - name: Crear VM en Hyper-V (estructura, VHDX y ISO)
@@ -140,7 +88,9 @@
 
           Import-Module Hyper-V
 
+          ##################################################################
           # 1. Elegir la unidad con más espacio libre (D o E)
+          ##################################################################
           $drives = foreach ($d in $CandidateDrives) {
             try {
               Get-PSDrive -Name $d -ErrorAction Stop
@@ -156,34 +106,44 @@
           $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
           Write-Host "Usando unidad $($bestDrive.Name): libre $([math]::Round($bestDrive.Free / 1GB, 2)) GB"
 
-          # 2. Carpeta raíz tipo 'D:\NOMBRE-VM'
-          $root        = $bestDrive.Root           # D:\ o E:\
-          $clusterRoot = Join-Path $root $VmName   # D:\SMXPRE-PRUEBA
+          ##################################################################
+          # 2. Estructura de carpetas
+          #    D:\VMNAME\
+          #      Snapshots\
+          #      Virtual Hard Disks\
+          #      Virtual Machines\  (la crea Hyper-V dentro de esta raíz)
+          ##################################################################
+          $root        = $bestDrive.Root              # D:\ o E:\
+          $clusterRoot = Join-Path $root $VmName      # D:\SMXPRE-PRUEBA
 
-          # Subcarpetas estándar
-          $vmRoot        = Join-Path $clusterRoot "Virtual Machines"    # D:\SMXPRE-PRUEBA\Virtual Machines
-          $vmFilesPath   = Join-Path $vmRoot "Files"                    # D:\SMXPRE-PRUEBA\Virtual Machines\
           $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"  # D:\SMXPRE-PRUEBA\Virtual Hard Disks
           $snapshotsRoot = Join-Path $clusterRoot "Snapshots"           # D:\SMXPRE-PRUEBA\Snapshots
 
-          foreach ($p in @($clusterRoot, $vmRoot, $vmFilesPath, $vhdRoot, $snapshotsRoot)) {
-          if (-not (Test-Path $p)) {
-          New-Item -ItemType Directory -Path $p -Force | Out-Null
+          # Hyper-V tomará esta ruta como raíz y creará:
+          # D:\SMXPRE-PRUEBA\Virtual Machines\<GUID>
+          $VmPath = $clusterRoot
+
+          foreach ($p in @($clusterRoot, $vhdRoot, $snapshotsRoot)) {
+            if (-not (Test-Path $p)) {
+              New-Item -ItemType Directory -Path $p -Force | Out-Null
             }
           }
 
+          ##################################################################
           # 3. Rutas de esta VM
-          $VmPath  = $vmFilesPath                                      # D:\SMXPRE-PRUEBA\Virtual Machines\
-          $VhdPath = Join-Path $vhdRoot ("{0}.vhdx" -f $VmName)        # D:\SMXPRE-PRUEBA\Virtual Hard Disks\SMXPRE-PRUEBA.vhdx
+          ##################################################################
+          $VhdPath = Join-Path $vhdRoot ("{0}.vhdx" -f $VmName)  # D:\SMXPRE-PRUEBA\Virtual Hard Disks\SMXPRE-PRUEBA.vhdx
 
-          Write-Host "Carpeta de la VM : $VmPath"
-          Write-Host "Disco de la VM   : $VhdPath"
+          Write-Host "Carpeta base de la VM : $VmPath"
+          Write-Host "Disco de la VM        : $VhdPath"
 
           if (-not (Test-Path $VmPath)) {
             New-Item -ItemType Directory -Path $VmPath -Force | Out-Null
           }
 
+          ##################################################################
           # 4. Validar acceso a la ISO (no tumbar todo si falla)
+          ##################################################################
           $isoOk = $false
           if ($IsoPath -and $IsoPath.Trim() -ne '') {
             try {
@@ -203,12 +163,16 @@
             $IsoPath = $null
           }
 
+          ##################################################################
           # 5. Crear VHDX vacío (disco dinámico)
+          ##################################################################
           if (-not (Test-Path $VhdPath)) {
             New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
           }
 
+          ##################################################################
           # 6. Crear VM si no existe
+          ##################################################################
           if (-not (Get-VM -Name $VmName -ErrorAction SilentlyContinue)) {
             New-VM -Name $VmName `
                    -MemoryStartupBytes $MemoryBytes `
@@ -220,16 +184,22 @@
             Write-Host "La VM $VmName ya existe, no se vuelve a crear."
           }
 
+          ##################################################################
           # 7. CPU
+          ##################################################################
           Set-VMProcessor -VMName $VmName -Count $CpuCount
 
+          ##################################################################
           # 8. Memoria dinámica
+          ##################################################################
           Set-VMMemory -VMName $VmName `
             -DynamicMemoryEnabled $true `
             -MinimumBytes 1GB `
             -MaximumBytes ($MemoryBytes * 2)
 
+          ##################################################################
           # 9. Montar ISO en la unidad de DVD (si hay ruta válida)
+          ##################################################################
           if ($IsoPath) {
             try {
               $dvd = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
@@ -252,7 +222,9 @@
             Write-Host "No se montó ninguna ISO en la VM (IsoPath nulo o inaccesible)."
           }
 
+          ##################################################################
           # 11. Iniciar VM
+          ##################################################################
           Start-VM -Name $VmName
 
         parameters:
