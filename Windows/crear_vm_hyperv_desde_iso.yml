@@ -103,7 +103,7 @@
 
           # 2. Carpeta raíz tipo 'D:\NOMBRE-VM'
           $root        = $bestDrive.Root             # D:\ o E:\
-          $clusterRoot = $root\$VmName     # D:\SMXPRE-PRUEBA
+          $clusterRoot = "$root\$VmName"    # D:\SMXPRE-PRUEBA
 
           # Subcarpetas estándar dentro de D:\NOMBRE-VM\
           $snapshotsRoot = Join-Path $clusterRoot "Snapshots"           # D:\NOMBRE-VM\Snapshots
