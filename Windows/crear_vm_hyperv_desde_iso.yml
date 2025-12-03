@@ -108,6 +108,7 @@
           # Subcarpetas estándar dentro de D:\NOMBRE-VM\
           $snapshotsRoot = Join-Path $clusterRoot "Snapshots"           # D:\NOMBRE-VM\Snapshots
           $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"  # D:\NOMBRE-VM\Virtual Hard Disks
+          $vmRoot        = Join-Path $clusterRoot "Virtual Machines"    # D:\SMXPRE-PRUEBA\Virtual Machines
 
           foreach ($p in @($clusterRoot, $snapshotsRoot, $vhdRoot, $vmRoot)) {
             if (-not (Test-Path $p)) {
