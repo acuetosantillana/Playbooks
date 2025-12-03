@@ -23,11 +23,12 @@
       - 'D'
       - 'E'
 
-    # Ruta ISO por defecto en NAS
+    # ISO por defecto en NAS
     iso_path_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
-    # Credenciales para acceder a la NAS (para cmdkey)
+    # Datos de la NAS (para el SMB Global Mapping)
     nas_server: '10.138.120.130'
+    nas_share: 'isos'
     nas_user: 'NASUSER_AQUI'
     nas_pass: 'NASPASS_AQUI'
 
@@ -58,17 +59,49 @@
         cpu_count: "{{ cpu | int }}"
 
     # -------------------------------------------------------------------
-    # 1) Configurar credenciales en el host Hyper-V para acceder a la NAS
-    #    Esto se corre en el hipervisor, no en localhost.
+    # 1) Crear SMB Global Mapping para que Hyper-V pueda acceder a la NAS
     # -------------------------------------------------------------------
-    - name: Registrar credenciales de la NAS en el host (cmdkey)
-      ansible.windows.win_command: >
-        cmdkey /add:{{ nas_server }} /user:{{ nas_user }} /pass:{{ nas_pass }}
+    - name: Crear SMB Global Mapping hacia la NAS para Hyper-V
+      ansible.windows.win_powershell:
+        script: |
+          param(
+            [string]$Server,
+            [string]$Share,
+            [string]$User,
+            [string]$Pass
+          )
+
+          $remotePath = "\\$Server\$Share"
+
+          $sec  = ConvertTo-SecureString $Pass -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential($User, $sec)
+
+          try {
+            # Si ya existe, no truena
+            $existing = Get-SmbGlobalMapping -RemotePath $remotePath -ErrorAction SilentlyContinue
+            if ($existing) {
+              Write-Host "MAPPING-ALREADY: $remotePath"
+            } else {
+              New-SmbGlobalMapping `
+                -RemotePath $remotePath `
+                -Credential $cred `
+                -Persistent $true `
+                -ErrorAction Stop | Out-Null
+              Write-Host "MAPPING-OK: $remotePath"
+            }
+          } catch {
+            throw "Error al crear SmbGlobalMapping para $remotePath : $($_.Exception.Message)"
+          }
+        parameters:
+          Server: "{{ nas_server }}"
+          Share: "{{ nas_share }}"
+          User: "{{ nas_user }}"
+          Pass: "{{ nas_pass }}"
       delegate_to: "{{ hyperv_host }}"
       run_once: true
 
     # -------------------------------------------------------------------
-    # 2) Crear VM (disco en D:\VMNAME\Virtual Hard Disks, VM Path = raíz)
+    # 2) Crear VM en Hyper-V usando ISO remota desde la NAS
     # -------------------------------------------------------------------
     - name: Crear VM en Hyper-V con ISO en NAS
       ansible.windows.win_powershell:
@@ -114,7 +147,7 @@
           Write-Host "Carpeta discos (vhdRoot): $vhdRoot"
           Write-Host "Disco VHDX              : $VhdPath"
 
-          # 3. Validar acceso a la ISO en la NAS (usa credenciales guardadas con cmdkey)
+          # 3. Validar acceso a la ISO en la NAS (usa SMB Global Mapping)
           $effectiveIsoPath = $null
           if ($IsoPath -and $IsoPath.Trim() -ne '') {
             if (-not (Test-Path $IsoPath)) {
