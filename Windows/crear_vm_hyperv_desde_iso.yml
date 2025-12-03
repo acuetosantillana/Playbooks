@@ -21,10 +21,10 @@
       - 'E'
 
     # Share donde están las ISOs (solo carpeta)
-    iso_share_root: '\\10.138.120.15\isos'
+    iso_share_root: '\\10.138.120.130\isos'
 
     # ISO por defecto (archivo dentro del share)
-    iso_path_default: '\\10.138.120.15\isos\SERVER_EVAL_x64FRE_es-es.iso'
+    iso_path_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
     # Usuario y password para acceder al share desde Hyper-V (para SmbGlobalMapping)
     # DEFINIR ESTO EN SEMAPHORE, NO EN PLANO
