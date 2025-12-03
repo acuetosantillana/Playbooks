@@ -20,7 +20,7 @@
       - 'D'
       - 'E'
 
-    # ISO por defecto (la que ya probaste por IP)
+    # ISO por defecto
     iso_path_default: '\\10.138.120.15\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
     # >>>>>>>>>>>>>>> VARIABLES DE AUTENTICACIÓN PARA ISO (MANDATORIAS) <<<<<<<<<<<<<<<
@@ -55,7 +55,6 @@
           - iso_user | length > 0
         fail_msg: "Faltan variables obligatorias: hyperv_host, vm_name, memory_gb, cpu, disk_gb, iso_user, iso_password."
 
-    # (El resto de las validaciones y normalizaciones se mantienen igual)
     - name: Validar que el host elegido está en la lista permitida
       ansible.builtin.assert:
         that:
@@ -103,6 +102,7 @@
 
           # =================================================================
           # LÓGICA DE AUTENTICACIÓN Y MONTAJE TEMPORAL DE ISO
+          # Se mapea el recurso compartido usando las credenciales proporcionadas.
           # =================================================================
           $OriginalIsoPath = $IsoPath
           
@@ -118,13 +118,8 @@
               $isoUncRoot = Split-Path -Path $IsoPath -Parent # Ej: \\10.138.120.15\isos
 
               try {
-                  # Crear una unidad de red temporal (ej: Z:) usando las credenciales
-                  New-PSDrive -Name $IsoDriveLetter `
-                              -PSProvider FileSystem `
-                              -Root $isoUncRoot `
-                              -Credential $credential `
-                              -Persist `
-                              -ErrorAction Stop | Out-Null
+                  # Crear una unidad de red temporal (ej: Z:). Comando en una sola línea para evitar problemas de parser de Ansible.
+                  New-PSDrive -Name $IsoDriveLetter -PSProvider FileSystem -Root $isoUncRoot -Credential $credential -Persist -ErrorAction Stop | Out-Null
                   
                   # Sobrescribir $IsoPath para usar la ruta de la unidad mapeada
                   $IsoPath = Join-Path "$($IsoDriveLetter):" $isoFileName
@@ -133,13 +128,12 @@
               } catch {
                   Write-Host "ERROR: Falló el mapeo de la unidad temporal '$($IsoDriveLetter):' con las credenciales proporcionadas."
                   Write-Host ("Detalle: {0}" -f $_.Exception.Message)
-                  # Usar la ruta original (UNC) como fallback, aunque probablemente falle en Test-Path o Set-VMDvdDrive
                   $IsoPath = $OriginalIsoPath
               }
           }
           
           # =================================================================
-          # INICIO DE LA LÓGICA DE CREACIÓN DE VM (El resto es casi idéntico)
+          # INICIO DE LA LÓGICA DE CREACIÓN DE VM
           # =================================================================
 
           # 1. Elegir la unidad con más espacio libre (D o E)
@@ -159,12 +153,10 @@
           Write-Host "Usando unidad $($bestDrive.Name): libre $([math]::Round($bestDrive.Free / 1GB, 2)) GB"
 
           # 2. Estructura de carpetas
-          $root      = $bestDrive.Root              # D:\ o E:\
-          $clusterRoot = Join-Path $root $VmName     # D:\SMXPRE-PRUEBA
-
-          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"  # D:\SMXPRE-PRUEBA\Virtual Hard Disks
-          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"           # D:\SMXPRE-PRUEBA\Snapshots
-
+          $root      = $bestDrive.Root
+          $clusterRoot = Join-Path $root $VmName
+          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"
+          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
           $VmPath = $clusterRoot
 
           foreach ($p in @($clusterRoot, $vhdRoot, $snapshotsRoot)) {
@@ -183,11 +175,10 @@
             New-Item -ItemType Directory -Path $VmPath -Force | Out-Null
           }
 
-          # 4. Validar acceso a la ISO (usando la ruta actualizada/mapeada)
+          # 4. Validar acceso a la ISO (usando la ruta mapeada/actualizada)
           $isoOk = $false
           if ($IsoPath -and $IsoPath.Trim() -ne '') {
             try {
-              # Ahora Test-Path debe funcionar si el mapeo fue exitoso
               $isoOk = Test-Path $IsoPath -ErrorAction Stop
               Write-Host "ISO accesible: $IsoPath (Test-Path = $isoOk)"
             } catch {
@@ -211,12 +202,8 @@
 
           # 6. Crear VM si no existe
           if (-not (Get-VM -Name $VmName -ErrorAction SilentlyContinue)) {
-            New-VM -Name $VmName `
-                   -MemoryStartupBytes $MemoryBytes `
-                   -Generation 2 `
-                   -VHDPath $VhdPath `
-                   -SwitchName $SwitchName `
-                   -Path $VmPath | Out-Null
+            # Se ha puesto en una sola línea para evitar errores de parser con `
+            New-VM -Name $VmName -MemoryStartupBytes $MemoryBytes -Generation 2 -VHDPath $VhdPath -SwitchName $SwitchName -Path $VmPath | Out-Null
           } else {
             Write-Host "La VM $VmName ya existe, no se vuelve a crear."
           }
@@ -225,20 +212,15 @@
           Set-VMProcessor -VMName $VmName -Count $CpuCount
 
           # 8. Memoria dinámica
-          Set-VMMemory -VMName $VmName `
-            -DynamicMemoryEnabled $true `
-            -MinimumBytes 1GB `
-            -MaximumBytes ($MemoryBytes * 2)
+          # Se ha puesto en una sola línea para evitar errores de parser con `
+          Set-VMMemory -VMName $VmName -DynamicMemoryEnabled $true -MinimumBytes 1GB -MaximumBytes ($MemoryBytes * 2)
 
           # 9. Montar ISO en la unidad de DVD
           if ($IsoPath) {
             try {
               $dvd = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
               if ($dvd) {
-                Set-VMDvdDrive -VMName $VmName `
-                  -ControllerNumber $dvd.ControllerNumber `
-                  -ControllerLocation $dvd.ControllerLocation `
-                  -Path $IsoPath -ErrorAction Stop
+                Set-VMDvdDrive -VMName $VmName -ControllerNumber $dvd.ControllerNumber -ControllerLocation $dvd.ControllerLocation -Path $IsoPath -ErrorAction Stop
               } else {
                 Add-VMDvdDrive -VMName $VmName -Path $IsoPath -ErrorAction Stop | Out-Null
               }
@@ -259,11 +241,11 @@
 
           # =================================================================
           # LIMPIEZA
+          # Se elimina la unidad de red temporal para que la letra quede libre.
           # =================================================================
           if ($IsoDriveLetter -and (Test-Path "$($IsoDriveLetter):")) {
               Write-Host "Limpiando unidad mapeada temporal ($($IsoDriveLetter):)."
               # Usamos Net Use para limpiar forzosamente el mapeo persistente
-              # Remove-PSDrive a veces no funciona para mapeos persistentes hechos con credenciales en este contexto.
               & net use "$($IsoDriveLetter):" /delete /y | Out-Null
           }
 
