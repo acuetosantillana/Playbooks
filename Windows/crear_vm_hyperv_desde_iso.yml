@@ -23,16 +23,16 @@
       - 'D'
       - 'E'
 
-    # ISO por defecto en NAS (Windows)
+    # ISO por defecto en NAS (Windows 2022 eval)
     iso_path_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
-    # Datos de la NAS (para el SMB Global Mapping, solo para la ISO de Windows)
+    # NAS para el SMB Global Mapping
     nas_server: '10.138.120.130'
     nas_share: 'isos'
     nas_user: 'NASUSER_AQUI'
     nas_pass: 'NASPASS_AQUI'
 
-    # Ruta local de oscdimg (donde tú lo copiaste)
+    # Ruta local de oscdimg
     oscdimg_path: 'C:\\Oscdimg\\oscdimg.exe'
 
   tasks:
@@ -48,12 +48,13 @@
           - memory_gb is defined
           - cpu is defined
           - disk_gb is defined
-          - vm_cidr is defined       # ej: 10.138.104.55/24
+          - vm_cidr is defined       # ej: 10.138.120.55/24
           - vm_gateway is defined
           - vm_dns1 is defined
+          - admin_password is defined
         fail_msg: >-
           Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb,
-          vm_cidr, vm_gateway, vm_dns1.
+          vm_cidr, vm_gateway, vm_dns1, admin_password.
 
     - name: Validar hyperv_host permitido
       ansible.builtin.assert:
@@ -61,7 +62,7 @@
           - hyperv_host in hyperv_hosts
         fail_msg: "El host {{ hyperv_host }} no está en la lista de hyperv_hosts permitidos."
 
-    - name: Normalizar variables
+    - name: Normalizar variables numéricas y rutas
       ansible.builtin.set_fact:
         v_switch_eff: "{{ v_switch | default(default_switch) }}"
         iso_path_eff: "{{ iso_path | default(iso_path_default) }}"
@@ -69,13 +70,12 @@
         disk_bytes: "{{ (disk_gb | int) * 1073741824 }}"
         cpu_count: "{{ cpu | int }}"
 
-        # Rutas LOCALES en el host Hyper-V para unattended
         unattended_xml_dir: "C:\\autounattend\\{{ vm_name }}"
         unattended_xml_path: "C:\\autounattend\\{{ vm_name }}\\autounattend.xml"
         unattended_iso_path: "C:\\ISOs\\{{ vm_name }}_autounattend.iso"
 
     # -------------------------------------------------------------------
-    # 1) SMB Global Mapping para que Hyper-V vea la ISO en la NAS
+    # 1) SMB Global Mapping hacia la NAS
     # -------------------------------------------------------------------
     - name: Crear SMB Global Mapping hacia la NAS para Hyper-V
       ansible.windows.win_powershell:
@@ -158,7 +158,16 @@
             Remove-Item -Path $IsoPath -Force
           }
 
-          $args = @('-n','-m','-d', $SourcePath, $IsoPath)
+          # Queremos que la RAÍZ de la ISO tenga directamente autounattend.xml
+          # y que respete minúsculas/mayúsculas.
+          $args = @(
+            '-n',           # nombres largos
+            '-m',           # sin límite de tamaño
+            '-u2',          # UDF 2.0
+            '-udfver102',   # versión UDF
+            $SourcePath,    # carpeta que contiene autounattend.xml
+            $IsoPath
+          )
 
           Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
 
@@ -175,7 +184,7 @@
           OscdimgPath: "{{ oscdimg_path }}"
 
     # -------------------------------------------------------------------
-    # 4) Crear/ajustar VM, VHD, DVDs y firmware
+    # 4) Crear / ajustar VM, VHD, DVDs y firmware
     # -------------------------------------------------------------------
     - name: Crear VM en Hyper-V con ISO en NAS + ISO unattended
       ansible.windows.win_powershell:
@@ -193,18 +202,16 @@
 
           Import-Module Hyper-V
 
-          # 1. Unidad con más espacio libre (D/E)
+          # 1. Elegir unidad con más espacio (D/E)
           $drives = foreach ($d in $CandidateDrives) {
             try { Get-PSDrive -Name $d -ErrorAction Stop } catch { $null }
           }
           if (-not $drives) {
             throw "Ninguna de las unidades candidatas ($($CandidateDrives -join ', ')) existe en este host."
           }
-
           $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
-          Write-Host "Usando unidad $($bestDrive.Name): libre $([math]::Round($bestDrive.Free / 1GB, 2)) GB"
+          Write-Host "Usando unidad $($bestDrive.Name): $([math]::Round($bestDrive.Free/1GB,2)) GB libres"
 
-          # 2. Carpetas de la VM
           $root        = $bestDrive.Root
           $clusterRoot = "$root\$VmName"
           $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
@@ -219,27 +226,19 @@
           $VmPath  = $root
           $VhdPath = Join-Path $vhdRoot "$VmName.vhdx"
 
-          Write-Host "Carpeta discos (vhdRoot): $vhdRoot"
-          Write-Host "Disco VHDX              : $VhdPath"
+          # 2. Validar ISOs
+          if (-not (Test-Path $IsoPath))       { throw "No se puede acceder a la ISO de Windows: $IsoPath" }
+          if (-not (Test-Path $UnattendIsoPath)) { throw "No se puede acceder a la ISO unattended: $UnattendIsoPath" }
 
-          # 3. Validar ISOs
-          if (-not (Test-Path $IsoPath)) {
-            throw "La ISO de Windows no es accesible desde este host: $IsoPath"
-          }
-          if (-not (Test-Path $UnattendIsoPath)) {
-            throw "La ISO de unattended no es accesible desde este host: $UnattendIsoPath"
-          }
-          Write-Host "ISO Windows   : $IsoPath"
-          Write-Host "ISO unattended: $UnattendIsoPath"
-
-          # 4. Crear VHDX si no existe
+          # 3. Crear VHDX si no existe
           if (-not (Test-Path $VhdPath)) {
             New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
+            Write-Host "VHD creado: $VhdPath"
           } else {
-            Write-Host "El VHDX ya existe: $VhdPath"
+            Write-Host "VHD ya existía: $VhdPath"
           }
 
-          # 5. Crear VM SIN VHD (NoVHD) para controlar puertos
+          # 4. Crear VM SIN VHD (NoVHD) para controlar puertos
           $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
           if (-not $vm) {
             New-VM -Name $VmName `
@@ -251,16 +250,15 @@
             $vm = Get-VM -Name $VmName
             Write-Host "VM creada: $VmName"
           } else {
-            Write-Host "La VM $VmName ya existe, no se crea de nuevo."
+            Write-Host "VM ya existía: $VmName"
           }
 
-          # 6. Asegurar VHD en SCSI 0:2
+          # 5. Asegurar VHD en SCSI 0:2
           $osDisk = Get-VMHardDiskDrive -VMName $VmName -ErrorAction SilentlyContinue |
                     Where-Object { $_.Path -eq $VhdPath }
 
           if ($osDisk) {
             if ($osDisk.ControllerNumber -ne 0 -or $osDisk.ControllerLocation -ne 2) {
-              Write-Host "Moviendo VHD del SO a SCSI 0:2..."
               Remove-VMHardDiskDrive -VMName $VmName `
                                      -ControllerNumber $osDisk.ControllerNumber `
                                      -ControllerLocation $osDisk.ControllerLocation
@@ -268,28 +266,24 @@
                                    -ControllerNumber 0 `
                                    -ControllerLocation 2 `
                                    -Path $VhdPath | Out-Null
-            } else {
-              Write-Host "VHD del SO ya está en SCSI 0:2."
             }
           } else {
-            Write-Host "Adjuntando VHD del SO en SCSI 0:2..."
             Add-VMHardDiskDrive -VMName $VmName `
                                  -ControllerNumber 0 `
                                  -ControllerLocation 2 `
                                  -Path $VhdPath | Out-Null
           }
 
-          # 7. CPU y memoria dinámica
+          # 6. CPU y memoria dinámica
           Set-VMProcessor -VMName $VmName -Count $CpuCount
           Set-VMMemory -VMName $VmName `
             -DynamicMemoryEnabled $true `
             -MinimumBytes 1GB `
             -MaximumBytes ($MemoryBytes * 2)
 
-          # 8. Apagar VM antes de toquetear firmware/DVD
+          # 7. Apagar VM antes de tocar firmware/DVD
           $vm = Get-VM -Name $VmName
           if ($vm.State -ne 'Off') {
-            Write-Host "Apagando VM para ajustar firmware y DVDs..."
             Stop-VM -Name $VmName -TurnOff -Force
             do {
               Start-Sleep -Seconds 1
@@ -297,66 +291,60 @@
             } while ($vm.State -ne 'Off')
           }
 
-          # 9. Limpiar DVDs previos
-          $existingDvds = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
-          if ($existingDvds) {
-            $existingDvds | ForEach-Object {
-              Write-Host "Eliminando DVD drive: Ctrl=$($_.ControllerNumber) Loc=$($_.ControllerLocation) Path=$($_.Path)"
+          # 8. Quitar todos los DVD drives
+          Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue |
+            ForEach-Object {
               Remove-VMDvdDrive -VMName $VmName `
                                 -ControllerNumber $_.ControllerNumber `
                                 -ControllerLocation $_.ControllerLocation `
                                 -Confirm:$false
             }
-          }
 
-          # 10. DVD principal (Windows) en SCSI 0:0
+          # 9. Agregar DVD de Windows en SCSI 0:0 y unattended en 0:1
           $dvdMain = Add-VMDvdDrive -VMName $VmName `
                                     -ControllerNumber 0 `
                                     -ControllerLocation 0 `
                                     -Path $IsoPath
-          Write-Host "DVD principal creado: Ctrl=$($dvdMain.ControllerNumber) Loc=$($dvdMain.ControllerLocation) Path=$($dvdMain.Path)"
-
-          # 11. DVD unattended en SCSI 0:1
           $dvdUnattend = Add-VMDvdDrive -VMName $VmName `
                                         -ControllerNumber 0 `
                                         -ControllerLocation 1 `
                                         -Path $UnattendIsoPath
-          Write-Host "DVD unattended creado: Ctrl=$($dvdUnattend.ControllerNumber) Loc=$($dvdUnattend.ControllerLocation) Path=$($dvdUnattend.Path)"
 
-          # 12. Configurar firmware y orden de arranque:
-          #     - Primer dispositivo: DVD con ISO de Windows
-          #     - Segundo: Disco duro
-          #     - Se elimina explícitamente el arranque por red (PXE)
+          # 10. Configurar firmware sin PXE:
+          #     BootOrder = [DVD Windows, Disco]
+          $fw  = Get-VMFirmware -VMName $VmName
+          $hdd = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
 
-          $hdd  = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
+          $desiredOrder = @()
+          if ($dvdMain) { $desiredOrder += $dvdMain }
+          if ($hdd)     { $desiredOrder += $hdd }
 
-          # Construimos un BootOrder SIN dispositivos de red
-          $bootOrder = @()
-          if ($dvdMain) { $bootOrder += $dvdMain }
-          if ($hdd)     { $bootOrder += $hdd }
+          Write-Host "BootOrder ANTES:"
+          $fw.BootOrder | ForEach-Object {
+            " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
+          } | Out-String | Write-Host
 
-          Write-Host "Aplicando firmware: FirstBootDevice = DVD Windows, sin PXE..."
           Set-VMFirmware -VMName $VmName `
             -FirstBootDevice $dvdMain `
-            -BootOrder $bootOrder `
+            -BootOrder $desiredOrder `
             -EnableSecureBoot On `
             -SecureBootTemplate 'MicrosoftWindows'
 
-          Write-Host "Boot order resultante (sin Network):"
+          Write-Host "BootOrder DESPUÉS:"
           (Get-VMFirmware -VMName $VmName).BootOrder |
-            ForEach-Object { " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))" } |
-            Out-String | Write-Host
+            ForEach-Object {
+              " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
+            } | Out-String | Write-Host
 
-          # 13. Iniciar la VM
+          # 11. Iniciar VM
           $vm = Get-VM -Name $VmName
           if ($vm.State -ne 'Running') {
             Start-VM -Name $VmName | Out-Null
             Write-Host "VM iniciada: $VmName"
           } else {
-            Write-Host "La VM $VmName ya estaba corriendo."
+            Write-Host "VM ya estaba corriendo."
           }
 
-          Write-Host "Proceso completado para la VM: $VmName"
         parameters:
           VmName: "{{ vm_name }}"
           MemoryBytes: "{{ memory_bytes }}"
