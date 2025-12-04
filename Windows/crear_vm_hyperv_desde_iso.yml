@@ -62,9 +62,10 @@
         memory_bytes: "{{ (memory_gb | int) * 1073741824 }}"
         disk_bytes: "{{ (disk_gb | int) * 1073741824 }}"
         cpu_count: "{{ cpu | int }}"
-        # Rutas en la NAS para XML y ISO de unattended
+    
+    # Rutas en la NAS para XML y ISO de unattended
         unattended_nas_dir: "\\\\{{ nas_server }}\\{{ nas_share }}\\unattend_{{ vm_name }}"
-        unattended_xml_path: "{{ unattended_nas_dir }}\\autounattend.xml"
+        unattended_xml_path: "\\\\{{ nas_server }}\\{{ nas_share }}\\unattend_{{ vm_name }}\\autounattend.xml"
         unattended_iso_path: "\\\\{{ nas_server }}\\{{ nas_share }}\\{{ vm_name }}_autounattend.iso"
 
     # -------------------------------------------------------------------
