@@ -183,164 +183,164 @@
           SourcePath: "{{ unattended_xml_dir }}"
           IsoPath: "{{ unattended_iso_path }}"
           OscdimgPath: "{{ oscdimg_path }}"
+    # -------------------------------------------------------------------
+    # 4) Crear VM en Hyper-V usando ISO de Windows en NAS + ISO unattended local
+    # -------------------------------------------------------------------
+    - name: Crear VM en Hyper-V con ISO en NAS + ISO unattended
+      ansible.windows.win_powershell:
+        script: |
+          param(
+            [string]$VmName,
+            [Int64]$MemoryBytes,
+            [Int64]$DiskBytes,
+            [int]$CpuCount,
+            [string]$SwitchName,
+            [string]$IsoPath,
+            [string]$UnattendIsoPath,
+            [string[]]$CandidateDrives
+          )
 
-      # -------------------------------------------------------------------
-      # 4) Crear VM en Hyper-V usando ISO de Windows en NAS + ISO unattended local
-      # -------------------------------------------------------------------
-      - name: Crear VM en Hyper-V con ISO en NAS + ISO unattended
-        ansible.windows.win_powershell:
-          script: |
-            param(
-              [string]$VmName,
-              [Int64]$MemoryBytes,
-              [Int64]$DiskBytes,
-              [int]$CpuCount,
-              [string]$SwitchName,
-              [string]$IsoPath,
-              [string]$UnattendIsoPath,
-              [string[]]$CandidateDrives
-            )
-  
-            Import-Module Hyper-V
-  
-            # 1. Elegir la unidad con más espacio libre (D o E)
-            $drives = foreach ($d in $CandidateDrives) {
-              try { Get-PSDrive -Name $d -ErrorAction Stop } catch { $null }
+          Import-Module Hyper-V
+
+          # 1. Elegir la unidad con más espacio libre (D o E)
+          $drives = foreach ($d in $CandidateDrives) {
+            try { Get-PSDrive -Name $d -ErrorAction Stop } catch { $null }
+          }
+
+          if (-not $drives) {
+            throw "Ninguna de las unidades candidatas ($($CandidateDrives -join ', ')) existe en este host."
+          }
+
+          $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
+          Write-Host "Usando unidad $($bestDrive.Name): libre $([math]::Round($bestDrive.Free / 1GB, 2)) GB"
+
+          # 2. Carpetas de la VM
+          $root        = $bestDrive.Root             # D:\ o E:\
+          $clusterRoot = "$root\$VmName"             # D:\VMNAME
+          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
+          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"
+
+          foreach ($p in @($clusterRoot, $snapshotsRoot, $vhdRoot)) {
+            if (-not (Test-Path $p)) {
+              New-Item -ItemType Directory -Path $p -Force | Out-Null
             }
-  
-            if (-not $drives) {
-              throw "Ninguna de las unidades candidatas ($($CandidateDrives -join ', ')) existe en este host."
-            }
-  
-            $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
-            Write-Host "Usando unidad $($bestDrive.Name): libre $([math]::Round($bestDrive.Free / 1GB, 2)) GB"
-  
-            # 2. Carpetas de la VM
-            $root        = $bestDrive.Root             # D:\ o E:\
-            $clusterRoot = "$root\$VmName"             # D:\VMNAME
-            $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
-            $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"
-  
-            foreach ($p in @($clusterRoot, $snapshotsRoot, $vhdRoot)) {
-              if (-not (Test-Path $p)) {
-                New-Item -ItemType Directory -Path $p -Force | Out-Null
-              }
-            }
-  
-            $VmPath  = $root                              # Path de la VM → raíz del disco
-            $VhdPath = Join-Path $vhdRoot "$VmName.vhdx"  # D:\VMNAME\Virtual Hard Disks\VMNAME.vhdx
-  
-            Write-Host "Carpeta discos (vhdRoot): $vhdRoot"
-            Write-Host "Disco VHDX              : $VhdPath"
-  
-            # 3. Validar ISO Windows (NAS)
-            if (-not (Test-Path $IsoPath)) {
-              throw "La ISO de Windows no es accesible desde este host: $IsoPath"
-            }
-            Write-Host "ISO Windows: $IsoPath"
-  
-            # 4. Validar ISO unattended local
-            if (-not (Test-Path $UnattendIsoPath)) {
-              throw "La ISO de unattended no es accesible desde este host: $UnattendIsoPath"
-            }
-            Write-Host "ISO unattended (local): $UnattendIsoPath"
-  
-            # 5. Crear VHDX si no existe
-            if (-not (Test-Path $VhdPath)) {
-              New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
-            } else {
-              Write-Host "El VHDX ya existe: $VhdPath"
-            }
-  
-            # 6. Crear VM si no existe
-            $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
-            if (-not $vm) {
-              New-VM -Name $VmName `
-                     -MemoryStartupBytes $MemoryBytes `
-                     -Generation 2 `
-                     -VHDPath $VhdPath `
-                     -SwitchName $SwitchName `
-                     -Path $VmPath | Out-Null
+          }
+
+          $VmPath  = $root                              # Path de la VM → raíz del disco
+          $VhdPath = Join-Path $vhdRoot "$VmName.vhdx"  # D:\VMNAME\Virtual Hard Disks\VMNAME.vhdx
+
+          Write-Host "Carpeta discos (vhdRoot): $vhdRoot"
+          Write-Host "Disco VHDX              : $VhdPath"
+
+          # 3. Validar ISO Windows (NAS)
+          if (-not (Test-Path $IsoPath)) {
+            throw "La ISO de Windows no es accesible desde este host: $IsoPath"
+          }
+          Write-Host "ISO Windows: $IsoPath"
+
+          # 4. Validar ISO unattended local
+          if (-not (Test-Path $UnattendIsoPath)) {
+            throw "La ISO de unattended no es accesible desde este host: $UnattendIsoPath"
+          }
+          Write-Host "ISO unattended (local): $UnattendIsoPath"
+
+          # 5. Crear VHDX si no existe
+          if (-not (Test-Path $VhdPath)) {
+            New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
+          } else {
+            Write-Host "El VHDX ya existe: $VhdPath"
+          }
+
+          # 6. Crear VM si no existe
+          $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
+          if (-not $vm) {
+            New-VM -Name $VmName `
+                   -MemoryStartupBytes $MemoryBytes `
+                   -Generation 2 `
+                   -VHDPath $VhdPath `
+                   -SwitchName $SwitchName `
+                   -Path $VmPath | Out-Null
+            $vm = Get-VM -Name $VmName
+            Write-Host "VM creada: $VmName"
+          } else {
+            Write-Host "La VM $VmName ya existe, no se crea de nuevo."
+          }
+
+          # 7. CPU y memoria dinámica
+          Set-VMProcessor -VMName $VmName -Count $CpuCount
+          Set-VMMemory -VMName $VmName `
+            -DynamicMemoryEnabled $true `
+            -MinimumBytes 1GB `
+            -MaximumBytes ($MemoryBytes * 2)
+
+          # 8. Asegurar que la VM esté APAGADA antes de tocar firmware/DVD
+          $vm = Get-VM -Name $VmName
+          if ($vm.State -ne 'Off') {
+            Write-Host "Apagando VM para ajustar firmware y DVDs..."
+            Stop-VM -Name $VmName -TurnOff -Force
+            # Esperar un poco a que cambie el estado
+            do {
+              Start-Sleep -Seconds 1
               $vm = Get-VM -Name $VmName
-              Write-Host "VM creada: $VmName"
-            } else {
-              Write-Host "La VM $VmName ya existe, no se crea de nuevo."
+            } while ($vm.State -ne 'Off')
+          }
+
+          # 9. Borrar TODOS los DVD drives existentes (si los hay)
+          $existingDvds = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
+          if ($existingDvds) {
+            $existingDvds | ForEach-Object {
+              Write-Host "Eliminando DVD drive: Ctrl=$($_.ControllerNumber) Loc=$($_.ControllerLocation) Path=$($_.Path)"
+              Remove-VMDvdDrive -VMName $VmName `
+                                -ControllerNumber $_.ControllerNumber `
+                                -ControllerLocation $_.ControllerLocation `
+                                -Confirm:$false
             }
-  
-            # 7. CPU y memoria dinámica
-            Set-VMProcessor -VMName $VmName -Count $CpuCount
-            Set-VMMemory -VMName $VmName `
-              -DynamicMemoryEnabled $true `
-              -MinimumBytes 1GB `
-              -MaximumBytes ($MemoryBytes * 2)
-  
-            # 8. Asegurar que la VM esté APAGADA antes de tocar firmware/DVD
-            $vm = Get-VM -Name $VmName
-            if ($vm.State -ne 'Off') {
-              Write-Host "Apagando VM para ajustar firmware y DVDs..."
-              Stop-VM -Name $VmName -TurnOff -Force
-              # Esperar un poco a que cambie el estado
-              do {
-                Start-Sleep -Seconds 1
-                $vm = Get-VM -Name $VmName
-              } while ($vm.State -ne 'Off')
-            }
-  
-            # 9. Borrar TODOS los DVD drives existentes (si los hay)
-            $existingDvds = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
-            if ($existingDvds) {
-              $existingDvds | ForEach-Object {
-                Write-Host "Eliminando DVD drive: Ctrl=$($_.ControllerNumber) Loc=$($_.ControllerLocation) Path=$($_.Path)"
-                Remove-VMDvdDrive -VMName $VmName `
-                                  -ControllerNumber $_.ControllerNumber `
-                                  -ControllerLocation $_.ControllerLocation `
-                                  -Confirm:$false
-              }
-            }
-  
-            # 10. Crear DVD principal con la ISO de Windows
-            $dvdMain = Add-VMDvdDrive -VMName $VmName -Path $IsoPath
-            Write-Host "DVD principal creado: Ctrl=$($dvdMain.ControllerNumber) Loc=$($dvdMain.ControllerLocation) Path=$($dvdMain.Path)"
-  
-            # 11. Crear segundo DVD con la ISO de unattended
-            $dvdUnattend = Add-VMDvdDrive -VMName $VmName -Path $UnattendIsoPath
-            Write-Host "DVD unattended creado: Ctrl=$($dvdUnattend.ControllerNumber) Loc=$($dvdUnattend.ControllerLocation) Path=$($dvdUnattend.Path)"
-  
-            # 12. Configurar orden de arranque: 1) DVD Windows 2) Disco 3) Red
-            $hdd  = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
-            $net  = Get-VMNetworkAdapter -VMName $VmName | Select-Object -First 1
-  
-            $bootOrder = @()
-            if ($dvdMain) { $bootOrder += $dvdMain }
-            if ($hdd)     { $bootOrder += $hdd }
-            if ($net)     { $bootOrder += $net }
-  
-            Write-Host "Estableciendo orden de arranque (DVD -> Disco -> Red)..."
-            Set-VMFirmware -VMName $VmName -BootOrder $bootOrder
-  
-            # 13. (Opcional) Asegurar plantilla de Secure Boot correcta
-            $firm = Get-VMFirmware -VMName $VmName
-            if ($firm.SecureBoot -eq $true -and $firm.SecureBootTemplate -ne 'MicrosoftWindows') {
-              Write-Host "Ajustando plantilla de Secure Boot a 'MicrosoftWindows'..."
-              Set-VMFirmware -VMName $VmName -EnableSecureBoot On -SecureBootTemplate 'MicrosoftWindows'
-            }
-  
-            # 14. Iniciar la VM
-            $vm = Get-VM -Name $VmName
-            if ($vm.State -ne 'Running') {
-              Start-VM -Name $VmName | Out-Null
-              Write-Host "VM iniciada: $VmName"
-            } else {
-              Write-Host "La VM $VmName ya estaba corriendo."
-            }
-  
-            Write-Host "Proceso completado para la VM: $VmName"
-          parameters:
-            VmName: "{{ vm_name }}"
-            MemoryBytes: "{{ memory_bytes }}"
-            DiskBytes: "{{ disk_bytes }}"
-            CpuCount: "{{ cpu_count }}"
-            SwitchName: "{{ v_switch_eff }}"
-            IsoPath: "{{ iso_path_eff }}"
-            UnattendIsoPath: "{{ unattended_iso_path }}"
-            CandidateDrives: "{{ candidate_drives }}"
+          }
+
+          # 10. Crear DVD principal con la ISO de Windows
+          $dvdMain = Add-VMDvdDrive -VMName $VmName -Path $IsoPath
+          Write-Host "DVD principal creado: Ctrl=$($dvdMain.ControllerNumber) Loc=$($dvdMain.ControllerLocation) Path=$($dvdMain.Path)"
+
+          # 11. Crear segundo DVD con la ISO de unattended
+          $dvdUnattend = Add-VMDvdDrive -VMName $VmName -Path $UnattendIsoPath
+          Write-Host "DVD unattended creado: Ctrl=$($dvdUnattend.ControllerNumber) Loc=$($dvdUnattend.ControllerLocation) Path=$($dvdUnattend.Path)"
+
+          # 12. Configurar orden de arranque: 1) DVD Windows 2) Disco 3) Red
+          $hdd  = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
+          $net  = Get-VMNetworkAdapter -VMName $VmName | Select-Object -First 1
+
+          $bootOrder = @()
+          if ($dvdMain) { $bootOrder += $dvdMain }
+          if ($hdd)     { $bootOrder += $hdd }
+          if ($net)     { $bootOrder += $net }
+
+          Write-Host "Estableciendo orden de arranque (DVD -> Disco -> Red)..."
+          Set-VMFirmware -VMName $VmName -BootOrder $bootOrder
+
+          # 13. (Opcional) Asegurar plantilla de Secure Boot correcta
+          $firm = Get-VMFirmware -VMName $VmName
+          if ($firm.SecureBoot -eq $true -and $firm.SecureBootTemplate -ne 'MicrosoftWindows') {
+            Write-Host "Ajustando plantilla de Secure Boot a 'MicrosoftWindows'..."
+            Set-VMFirmware -VMName $VmName -EnableSecureBoot On -SecureBootTemplate 'MicrosoftWindows'
+          }
+
+          # 14. Iniciar la VM
+          $vm = Get-VM -Name $VmName
+          if ($vm.State -ne 'Running') {
+            Start-VM -Name $VmName | Out-Null
+            Write-Host "VM iniciada: $VmName"
+          } else {
+            Write-Host "La VM $VmName ya estaba corriendo."
+          }
+
+          Write-Host "Proceso completado para la VM: $VmName"
+        parameters:
+          VmName: "{{ vm_name }}"
+          MemoryBytes: "{{ memory_bytes }}"
+          DiskBytes: "{{ disk_bytes }}"
+          CpuCount: "{{ cpu_count }}"
+          SwitchName: "{{ v_switch_eff }}"
+          IsoPath: "{{ iso_path_eff }}"
+          UnattendIsoPath: "{{ unattended_iso_path }}"
+          CandidateDrives: "{{ candidate_drives }}"
+
