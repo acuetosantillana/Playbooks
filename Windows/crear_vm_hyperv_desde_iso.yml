@@ -142,24 +142,54 @@
             [string]$XmlDir,
             [string]$IsoPath
           )
-
+    
+          # Habilitar TLS 1.2 por si el servidor tiene TLS viejito
+          try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          } catch {}
+    
+          # Si ya existe el ISO, lo borramos
           if (Test-Path $IsoPath) {
             Remove-Item -Path $IsoPath -Force
           }
-
+    
+          # Verificar si el módulo ya existe
+          $mod = Get-Module -ListAvailable -Name PowerShellCookbook
+    
+          if (-not $mod) {
+            Write-Host "PowerShellCookbook no está instalado, intentando instalarlo desde PSGallery..."
+    
+            try {
+              Install-PackageProvider -Name NuGet -Force -Scope AllUsers -ErrorAction Stop
+            } catch {
+              throw "No se pudo instalar NuGet (requerido para PowerShellCookbook): $($_.Exception.Message)"
+            }
+    
+            try {
+              Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction Stop
+            } catch {
+              Write-Host "No se pudo marcar PSGallery como Trusted, se continúa igual..."
+            }
+    
+            try {
+              Install-Module -Name PowerShellCookbook -Force -Scope AllUsers -ErrorAction Stop
+            } catch {
+              throw "No se pudo instalar PowerShellCookbook: $($_.Exception.Message)"
+            }
+          }
+    
           try {
             Import-Module PowerShellCookbook -ErrorAction Stop
           } catch {
-            throw "No se pudo importar PowerShellCookbook. Asegúrate de tener New-IsoFile disponible en el host Hyper-V."
+            throw "No se pudo importar PowerShellCookbook aunque parece instalado: $($_.Exception.Message)"
           }
-
+    
           New-IsoFile -Source $XmlDir -Destination $IsoPath -Force
           Write-Host "ISO de unattended creado en NAS: $IsoPath"
         parameters:
           XmlDir: "{{ unattended_nas_dir }}"
           IsoPath: "{{ unattended_iso_path }}"
       delegate_to: "{{ hyperv_host }}"
-
     # -------------------------------------------------------------------
     # 4) Crear VM en Hyper-V usando ISO remota desde la NAS + unattended
     # -------------------------------------------------------------------
