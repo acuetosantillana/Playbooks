@@ -1,6 +1,6 @@
 ---
 - name: Crear VM en Hyper-V usando ISO en NAS + unattended
-  hosts: localhost
+  hosts: "{{ hyperv_host }}"
   gather_facts: no
 
   collections:
@@ -12,7 +12,7 @@
       - SMXHVCEDIS
       - SMXHVFCAWS19
       - SMXHVFCBWS19
-      - SMXFCFVB
+      - SMXFCHVB
       - SMXHYPVA
 
     # vSwitch por defecto
@@ -93,16 +93,22 @@
           $cred = New-Object System.Management.Automation.PSCredential($User, $sec)
 
           try {
-            # Si ya existe, no truena
+            # Revisar si ya existe el Global Mapping
             $existing = Get-SmbGlobalMapping -RemotePath $remotePath -ErrorAction SilentlyContinue
             if ($existing) {
               Write-Host "MAPPING-ALREADY: $remotePath"
             } else {
+              # Por si hay conexiones SMB normales (Error 1219)
+              try {
+                net use $remotePath /delete /y | Out-Null
+              } catch { }
+
               New-SmbGlobalMapping `
                 -RemotePath $remotePath `
                 -Credential $cred `
                 -Persistent $true `
                 -ErrorAction Stop | Out-Null
+
               Write-Host "MAPPING-OK: $remotePath"
             }
           } catch {
@@ -113,8 +119,6 @@
           Share: "{{ nas_share }}"
           User: "{{ nas_user }}"
           Pass: "{{ nas_pass }}"
-      delegate_to: "{{ hyperv_host }}"
-      run_once: true
 
     # -------------------------------------------------------------------
     # 2) Preparar carpetas locales y generar autounattend.xml en el Hyper-V
@@ -123,19 +127,16 @@
       ansible.windows.win_file:
         path: "{{ unattended_xml_dir }}"
         state: directory
-      delegate_to: "{{ hyperv_host }}"
 
     - name: Crear carpeta local para ISOs de unattended
       ansible.windows.win_file:
         path: "C:\\ISOs"
         state: directory
-      delegate_to: "{{ hyperv_host }}"
 
     - name: Generar autounattend.xml en el host Hyper-V para esta VM
       ansible.builtin.template:
         src: "templates/autounattend.xml.j2"
         dest: "{{ unattended_xml_path }}"
-      delegate_to: "{{ hyperv_host }}"
 
     # -------------------------------------------------------------------
     # 3) Crear ISO de unattended local con oscdimg
@@ -164,7 +165,7 @@
 
           $args = @(
             '-n',    # nombres largos habilitados
-            '-m',    # permitir tamaño grande (no afecta aquí)
+            '-m',    # permitir tamaño grande
             $SourcePath,
             $IsoPath
           )
@@ -182,7 +183,6 @@
           SourcePath: "{{ unattended_xml_dir }}"
           IsoPath: "{{ unattended_iso_path }}"
           OscdimgPath: "{{ oscdimg_path }}"
-      delegate_to: "{{ hyperv_host }}"
 
     # -------------------------------------------------------------------
     # 4) Crear VM en Hyper-V usando ISO de Windows en NAS + ISO unattended local
@@ -207,6 +207,7 @@
           $drives = foreach ($d in $CandidateDrives) {
             try { Get-PSDrive -Name $d -ErrorAction Stop } catch { $null }
           }
+
           if (-not $drives) {
             throw "Ninguna de las unidades candidatas ($($CandidateDrives -join ', ')) existe en este host."
           }
@@ -214,7 +215,7 @@
           $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
 
           $root        = $bestDrive.Root.TrimEnd('\')      # "D:" o "E:"
-          $clusterRoot = Join-Path $root $VmName           # D:\SMXPRE-PRUEBA
+          $clusterRoot = Join-Path $root $VmName           # D:\VMNAME
 
           # 2. Carpeta para discos: D:\VMNAME\Virtual Hard Disks
           if (-not (Test-Path $clusterRoot)) {
@@ -247,16 +248,21 @@
           # 5. Crear VHDX si no existe
           if (-not (Test-Path $VhdPath)) {
             New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
+          } else {
+            Write-Host "El VHDX ya existe: $VhdPath"
           }
 
           # 6. Crear VM si no existe
-          if (-not (Get-VM -Name $VmName -ErrorAction SilentlyContinue)) {
+          $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
+          if (-not $vm) {
             New-VM -Name $VmName `
                    -MemoryStartupBytes $MemoryBytes `
                    -Generation 2 `
                    -VHDPath $VhdPath `
                    -SwitchName $SwitchName `
                    -Path $VmPath | Out-Null
+            $vm = Get-VM -Name $VmName
+            Write-Host "VM creada: $VmName"
           } else {
             Write-Host "La VM $VmName ya existe, no se crea de nuevo."
           }
@@ -269,8 +275,10 @@
             -MaximumBytes ($MemoryBytes * 2)
 
           # 8. Montar ISO Windows en DVD principal
-          $dvdMain = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($dvdMain) {
+          $dvdDrives = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
+
+          if ($dvdDrives) {
+            $dvdMain = $dvdDrives | Sort-Object ControllerNumber, ControllerLocation | Select-Object -First 1
             Set-VMDvdDrive -VMName $VmName `
               -ControllerNumber $dvdMain.ControllerNumber `
               -ControllerLocation $dvdMain.ControllerLocation `
@@ -279,4 +287,46 @@
             $dvdMain = Add-VMDvdDrive -VMName $VmName -Path $IsoPath
           }
 
-          # 9. Montar ISO unattended co
+          # 9. Montar ISO unattended como segundo DVD
+          $dvdDrives = Get-VMDvdDrive -VMName $VmName | Sort-Object ControllerNumber, ControllerLocation
+          if ($dvdDrives.Count -ge 2) {
+            $dvdUnattend = $dvdDrives[1]
+            Set-VMDvdDrive -VMName $VmName `
+              -ControllerNumber $dvdUnattend.ControllerNumber `
+              -ControllerLocation $dvdUnattend.ControllerLocation `
+              -Path $UnattendIsoPath
+          } else {
+            # Suponemos mismo controlador, siguiente ubicación
+            $ctrlNum  = $dvdMain.ControllerNumber
+            $ctrlLoc2 = $dvdMain.ControllerLocation + 1
+            Add-VMDvdDrive -VMName $VmName `
+              -ControllerNumber $ctrlNum `
+              -ControllerLocation $ctrlLoc2 `
+              -Path $UnattendIsoPath | Out-Null
+          }
+
+          # 10. Forzar arranque desde DVD
+          $firm = Get-VMFirmware -VMName $VmName
+          $dvdBoot = Get-VMDvdDrive -VMName $VmName | Select-Object -First 1
+          if ($dvdBoot) {
+            Set-VMFirmware -VMName $VmName -FirstBootDevice $dvdBoot
+          }
+
+          # 11. Iniciar la VM
+          if ($vm.State -ne 'Running') {
+            Start-VM -Name $VmName | Out-Null
+            Write-Host "VM iniciada: $VmName"
+          } else {
+            Write-Host "La VM $VmName ya estaba corriendo."
+          }
+
+          Write-Host "Proceso completado para la VM: $VmName"
+        parameters:
+          VmName: "{{ vm_name }}"
+          MemoryBytes: "{{ memory_bytes }}"
+          DiskBytes: "{{ disk_bytes }}"
+          CpuCount: "{{ cpu_count }}"
+          SwitchName: "{{ v_switch_eff }}"
+          IsoPath: "{{ iso_path_eff }}"
+          UnattendIsoPath: "{{ unattended_iso_path }}"
+          CandidateDrives: "{{ candidate_drives }}"
