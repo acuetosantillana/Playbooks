@@ -323,25 +323,28 @@
                                         -Path $UnattendIsoPath
           Write-Host "DVD unattended creado: Ctrl=$($dvdUnattend.ControllerNumber) Loc=$($dvdUnattend.ControllerLocation) Path=$($dvdUnattend.Path)"
 
-          # 12. Configurar firmware:
-          #     - Primer boot device = DVD Windows
-          #     - BootOrder sin adaptador de red (solo DVD y disco)
+          # 12. Configurar firmware y orden de arranque:
+          #     - Primer dispositivo: DVD con ISO de Windows
+          #     - Segundo: Disco duro
+          #     - Se elimina explícitamente el arranque por red (PXE)
+
           $hdd  = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
 
+          # Construimos un BootOrder SIN dispositivos de red
           $bootOrder = @()
           if ($dvdMain) { $bootOrder += $dvdMain }
           if ($hdd)     { $bootOrder += $hdd }
 
-          Write-Host "Aplicando firmware: FirstBootDevice = DVD y sin PXE..."
+          Write-Host "Aplicando firmware: FirstBootDevice = DVD Windows, sin PXE..."
           Set-VMFirmware -VMName $VmName `
             -FirstBootDevice $dvdMain `
             -BootOrder $bootOrder `
             -EnableSecureBoot On `
             -SecureBootTemplate 'MicrosoftWindows'
 
-          Write-Host "Boot order resultante:"
+          Write-Host "Boot order resultante (sin Network):"
           (Get-VMFirmware -VMName $VmName).BootOrder |
-            ForEach-Object { ' - ' + $_.FirmwareDeviceName } |
+            ForEach-Object { " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))" } |
             Out-String | Write-Host
 
           # 13. Iniciar la VM
