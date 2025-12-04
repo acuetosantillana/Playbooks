@@ -1,3 +1,188 @@
+---
+- name: Crear VM en Hyper-V usando ISO en NAS + unattended
+  hosts: "{{ hyperv_host }}"
+  gather_facts: no
+
+  collections:
+    - ansible.windows
+
+  vars:
+    # Hosts válidos
+    hyperv_hosts:
+      - SMXHVCEDIS
+      - SMXHVFCAWS19
+      - SMXHVFCBWS19
+      - SMXFCHVB
+      - SMXHYPVA
+
+    # vSwitch por defecto
+    default_switch: 'LAN-Prod'
+
+    # Unidades donde se pueden guardar discos de la VM
+    candidate_drives:
+      - 'D'
+      - 'E'
+
+    # ISO por defecto en NAS (Windows)
+    iso_path_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'
+
+    # Datos de la NAS (para el SMB Global Mapping, solo para la ISO de Windows)
+    nas_server: '10.138.120.130'
+    nas_share: 'isos'
+    nas_user: 'NASUSER_AQUI'
+    nas_pass: 'NASPASS_AQUI'
+
+    # Ruta local de oscdimg (donde tú lo copiaste)
+    oscdimg_path: 'C:\\Oscdimg\\oscdimg.exe'
+
+  tasks:
+
+    # -------------------------------------------------------------------
+    # 0) Validaciones y normalización
+    # -------------------------------------------------------------------
+    - name: Validar variables obligatorias
+      ansible.builtin.assert:
+        that:
+          - hyperv_host is defined
+          - vm_name is defined
+          - memory_gb is defined
+          - cpu is defined
+          - disk_gb is defined
+          - vm_cidr is defined       # ej: 10.138.104.55/24
+          - vm_gateway is defined
+          - vm_dns1 is defined
+        fail_msg: >-
+          Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb,
+          vm_cidr, vm_gateway, vm_dns1.
+
+    - name: Validar hyperv_host permitido
+      ansible.builtin.assert:
+        that:
+          - hyperv_host in hyperv_hosts
+        fail_msg: "El host {{ hyperv_host }} no está en la lista de hyperv_hosts permitidos."
+
+    - name: Normalizar variables
+      ansible.builtin.set_fact:
+        v_switch_eff: "{{ v_switch | default(default_switch) }}"
+        iso_path_eff: "{{ iso_path | default(iso_path_default) }}"
+        memory_bytes: "{{ (memory_gb | int) * 1073741824 }}"
+        disk_bytes: "{{ (disk_gb | int) * 1073741824 }}"
+        cpu_count: "{{ cpu | int }}"
+
+        # Rutas LOCALES en el host Hyper-V para unattended
+        unattended_xml_dir: "C:\\autounattend\\{{ vm_name }}"
+        unattended_xml_path: "C:\\autounattend\\{{ vm_name }}\\autounattend.xml"
+        unattended_iso_path: "C:\\ISOs\\{{ vm_name }}_autounattend.iso"
+
+    # -------------------------------------------------------------------
+    # 1) Crear SMB Global Mapping para que Hyper-V pueda acceder a la ISO en la NAS
+    # -------------------------------------------------------------------
+    - name: Crear SMB Global Mapping hacia la NAS para Hyper-V
+      ansible.windows.win_powershell:
+        script: |
+          param(
+            [string]$Server,
+            [string]$Share,
+            [string]$User,
+            [string]$Pass
+          )
+
+          $remotePath = "\\$Server\$Share"
+
+          $sec  = ConvertTo-SecureString $Pass -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential($User, $sec)
+
+          try {
+            # Revisar si ya existe el Global Mapping
+            $existing = Get-SmbGlobalMapping -RemotePath $remotePath -ErrorAction SilentlyContinue
+            if ($existing) {
+              Write-Host "MAPPING-ALREADY: $remotePath"
+            } else {
+              # Por si hay conexiones SMB normales (Error 1219)
+              try {
+                net use $remotePath /delete /y | Out-Null
+              } catch { }
+
+              New-SmbGlobalMapping `
+                -RemotePath $remotePath `
+                -Credential $cred `
+                -Persistent $true `
+                -ErrorAction Stop | Out-Null
+
+              Write-Host "MAPPING-OK: $remotePath"
+            }
+          } catch {
+            throw "Error al crear SmbGlobalMapping para $remotePath : $($_.Exception.Message)"
+          }
+        parameters:
+          Server: "{{ nas_server }}"
+          Share: "{{ nas_share }}"
+          User: "{{ nas_user }}"
+          Pass: "{{ nas_pass }}"
+
+    # -------------------------------------------------------------------
+    # 2) Preparar carpetas locales y generar autounattend.xml en el Hyper-V
+    # -------------------------------------------------------------------
+    - name: Crear carpeta local para autounattend.xml
+      ansible.windows.win_file:
+        path: "{{ unattended_xml_dir }}"
+        state: directory
+
+    - name: Crear carpeta local para ISOs de unattended
+      ansible.windows.win_file:
+        path: "C:\\ISOs"
+        state: directory
+
+    - name: Generar autounattend.xml en el host Hyper-V para esta VM
+      ansible.builtin.template:
+        src: "templates/autounattend.xml.j2"
+        dest: "{{ unattended_xml_path }}"
+
+    # -------------------------------------------------------------------
+    # 3) Crear ISO de unattended local con oscdimg
+    # -------------------------------------------------------------------
+    - name: Crear ISO autounattend local en el host Hyper-V con oscdimg
+      ansible.windows.win_powershell:
+        script: |
+          param(
+            [string]$SourcePath,
+            [string]$IsoPath,
+            [string]$OscdimgPath
+          )
+
+          if (-not (Test-Path $SourcePath)) {
+            throw "La carpeta origen no existe: $SourcePath"
+          }
+
+          if (-not (Test-Path $OscdimgPath)) {
+            throw "No se encontró oscdimg.exe en: $OscdimgPath"
+          }
+
+          # Borrar ISO previo si existe
+          if (Test-Path $IsoPath) {
+            Remove-Item -Path $IsoPath -Force
+          }
+
+          $args = @(
+            '-n',    # nombres largos habilitados
+            '-m',    # permitir tamaño grande
+            $SourcePath,
+            $IsoPath
+          )
+
+          Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
+
+          $p = Start-Process -FilePath $OscdimgPath -ArgumentList $args -Wait -PassThru -NoNewWindow
+
+          if ($p.ExitCode -ne 0) {
+            throw "oscdimg terminó con código $($p.ExitCode). Revisa la ruta y permisos."
+          }
+
+          Write-Host "ISO de unattended creado localmente: $IsoPath"
+        parameters:
+          SourcePath: "{{ unattended_xml_dir }}"
+          IsoPath: "{{ unattended_iso_path }}"
+          OscdimgPath: "{{ oscdimg_path }}"
     # -------------------------------------------------------------------
     # 4) Crear VM en Hyper-V usando ISO de Windows en NAS + ISO unattended local
     # -------------------------------------------------------------------
@@ -89,15 +274,15 @@
             -MaximumBytes ($MemoryBytes * 2)
 
           # 8. Asegurar que la VM esté APAGADA antes de tocar firmware/DVD
-          $vmState = (Get-VM -Name $VmName).State
-          if ($vmState -ne 'Off') {
-            Write-Host "La VM está en estado $vmState. Apagando para aplicar DVDs y boot order..."
+          $vm = Get-VM -Name $VmName
+          if ($vm.State -ne 'Off') {
+            Write-Host "Apagando VM para ajustar firmware y DVDs..."
             Stop-VM -Name $VmName -TurnOff -Force
+            # Esperar un poco a que cambie el estado
             do {
-              Start-Sleep -Milliseconds 500
-              $vmState = (Get-VM -Name $VmName).State
-            } while ($vmState -ne 'Off')
-            Write-Host "VM apagada correctamente."
+              Start-Sleep -Seconds 1
+              $vm = Get-VM -Name $VmName
+            } while ($vm.State -ne 'Off')
           }
 
           # 9. Borrar TODOS los DVD drives existentes (si los hay)
