@@ -153,43 +153,59 @@
             Remove-Item -Path $IsoPath -Force
           }
     
-          # Verificar si el módulo ya existe
-          $mod = Get-Module -ListAvailable -Name PowerShellCookbook
+          # Primero: ¿ya existe el comando New-IsoFile?
+          $cmd = Get-Command New-IsoFile -ErrorAction SilentlyContinue
     
-          if (-not $mod) {
-            Write-Host "PowerShellCookbook no está instalado, intentando instalarlo desde PSGallery..."
+          if (-not $cmd) {
+            # Verificar si el módulo ya existe
+            $mod = Get-Module -ListAvailable -Name PowerShellCookbook
     
-            try {
-              Install-PackageProvider -Name NuGet -Force -Scope AllUsers -ErrorAction Stop
-            } catch {
-              throw "No se pudo instalar NuGet (requerido para PowerShellCookbook): $($_.Exception.Message)"
+            if (-not $mod) {
+              Write-Host "PowerShellCookbook no está instalado, intentando instalarlo desde PSGallery..."
+    
+              try {
+                Install-PackageProvider -Name NuGet -Force -Scope AllUsers -ErrorAction Stop
+              } catch {
+                throw "No se pudo instalar NuGet (requerido para PowerShellCookbook): $($_.Exception.Message)"
+              }
+    
+              try {
+                Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction Stop
+              } catch {
+                Write-Host "No se pudo marcar PSGallery como Trusted, se continúa igual..."
+              }
+    
+              try {
+                # OJO: aquí agregamos -AllowClobber
+                Install-Module -Name PowerShellCookbook -Force -Scope AllUsers -AllowClobber -ErrorAction Stop
+              } catch {
+                throw "No se pudo instalar PowerShellCookbook: $($_.Exception.Message)"
+              }
             }
     
             try {
-              Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction Stop
+              Import-Module PowerShellCookbook -ErrorAction Stop
             } catch {
-              Write-Host "No se pudo marcar PSGallery como Trusted, se continúa igual..."
+              throw "No se pudo importar PowerShellCookbook aunque parece instalado: $($_.Exception.Message)"
             }
     
-            try {
-              Install-Module -Name PowerShellCookbook -Force -Scope AllUsers -ErrorAction Stop
-            } catch {
-              throw "No se pudo instalar PowerShellCookbook: $($_.Exception.Message)"
+            # Volvemos a buscar el comando
+            $cmd = Get-Command New-IsoFile -ErrorAction SilentlyContinue
+            if (-not $cmd) {
+              throw "New-IsoFile sigue sin existir incluso después de instalar PowerShellCookbook."
             }
+          } else {
+            Write-Host "El comando New-IsoFile ya existe, no se instala PowerShellCookbook."
           }
     
-          try {
-            Import-Module PowerShellCookbook -ErrorAction Stop
-          } catch {
-            throw "No se pudo importar PowerShellCookbook aunque parece instalado: $($_.Exception.Message)"
-          }
-    
+          # Aquí ya asumimos que New-IsoFile está disponible
           New-IsoFile -Source $XmlDir -Destination $IsoPath -Force
           Write-Host "ISO de unattended creado en NAS: $IsoPath"
         parameters:
           XmlDir: "{{ unattended_nas_dir }}"
           IsoPath: "{{ unattended_iso_path }}"
       delegate_to: "{{ hyperv_host }}"
+      
     # -------------------------------------------------------------------
     # 4) Crear VM en Hyper-V usando ISO remota desde la NAS + unattended
     # -------------------------------------------------------------------
