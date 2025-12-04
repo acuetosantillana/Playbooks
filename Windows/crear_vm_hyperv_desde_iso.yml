@@ -1,5 +1,5 @@
 ---
-- name: Crear VM en Hyper-V usando ISO en NAS (sin copiar ISO) + unattended
+- name: Crear VM en Hyper-V usando ISO en NAS + unattended
   hosts: localhost
   gather_facts: no
 
@@ -31,6 +31,9 @@
     nas_share: 'isos'
     nas_user: 'NASUSER_AQUI'
     nas_pass: 'NASPASS_AQUI'
+
+    # Ruta local de oscdimg (donde tú lo copiaste)
+    oscdimg_path: 'C:\\Oscdimg\\oscdimg.exe'
 
   tasks:
 
@@ -72,7 +75,7 @@
         unattended_iso_path: "C:\\ISOs\\{{ vm_name }}_autounattend.iso"
 
     # -------------------------------------------------------------------
-    # 1) Crear SMB Global Mapping para que Hyper-V pueda acceder a la NAS
+    # 1) Crear SMB Global Mapping para que Hyper-V pueda acceder a la ISO en la NAS
     # -------------------------------------------------------------------
     - name: Crear SMB Global Mapping hacia la NAS para Hyper-V
       ansible.windows.win_powershell:
@@ -135,18 +138,23 @@
       delegate_to: "{{ hyperv_host }}"
 
     # -------------------------------------------------------------------
-    # 3) Crear ISO de unattended local en el host Hyper-V (sin módulos externos)
+    # 3) Crear ISO de unattended local con oscdimg
     # -------------------------------------------------------------------
-    - name: Crear ISO autounattend local en el host Hyper-V (sin PowerShellCookbook)
+    - name: Crear ISO autounattend local en el host Hyper-V con oscdimg
       ansible.windows.win_powershell:
         script: |
           param(
             [string]$SourcePath,
-            [string]$IsoPath
+            [string]$IsoPath,
+            [string]$OscdimgPath
           )
 
           if (-not (Test-Path $SourcePath)) {
             throw "La carpeta origen no existe: $SourcePath"
+          }
+
+          if (-not (Test-Path $OscdimgPath)) {
+            throw "No se encontró oscdimg.exe en: $OscdimgPath"
           }
 
           # Borrar ISO previo si existe
@@ -154,56 +162,26 @@
             Remove-Item -Path $IsoPath -Force
           }
 
-          # Crear objeto de sistema de archivos ISO (IMAPI2)
-          try {
-            $fsi = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
-          } catch {
-            throw "No se pudo crear el objeto COM IMAPI2FS.MsftFileSystemImage. Verifica que IMAPI2 esté disponible: $($_.Exception.Message)"
+          $args = @(
+            '-n',    # nombres largos habilitados
+            '-m',    # permitir tamaño grande (no afecta aquí)
+            $SourcePath,
+            $IsoPath
+          )
+
+          Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
+
+          $p = Start-Process -FilePath $OscdimgPath -ArgumentList $args -Wait -PassThru -NoNewWindow
+
+          if ($p.ExitCode -ne 0) {
+            throw "oscdimg terminó con código $($p.ExitCode). Revisa la ruta y permisos."
           }
-
-          $fsi.FileSystemsToCreate = 4   # UDF
-          $fsi.VolumeName = "UNATTEND"
-
-          # Agregar todo el contenido de la carpeta al ISO
-          $root = $fsi.Root
-          $null = $root.AddTree($SourcePath, $true)
-
-          # Generar la imagen
-          $result = $fsi.CreateResultImage()
-          $stream = $result.ImageStream
-
-          # Usar ADODB.Stream para escribir a archivo
-          try {
-            $ado = New-Object -ComObject ADODB.Stream
-          } catch {
-            throw "No se pudo crear el objeto COM ADODB.Stream: $($_.Exception.Message)"
-          }
-
-          $ado.Type = 1   # 1 = binary
-          $ado.Open()
-
-          $bufferSize = 2048
-          $buffer = New-Object byte[] $bufferSize
-
-          while ($true) {
-            $bytesRead = $stream.Read($buffer, $bufferSize)
-            if ($bytesRead -eq 0) { break }
-
-            if ($bytesRead -lt $bufferSize) {
-              $ado.Write($buffer[0..($bytesRead-1)])
-            } else {
-              $ado.Write($buffer)
-            }
-          }
-
-          # 2 = adSaveCreateOverWrite
-          $ado.SaveToFile($IsoPath, 2)
-          $ado.Close()
 
           Write-Host "ISO de unattended creado localmente: $IsoPath"
         parameters:
           SourcePath: "{{ unattended_xml_dir }}"
           IsoPath: "{{ unattended_iso_path }}"
+          OscdimgPath: "{{ oscdimg_path }}"
       delegate_to: "{{ hyperv_host }}"
 
     # -------------------------------------------------------------------
@@ -301,34 +279,4 @@
             $dvdMain = Add-VMDvdDrive -VMName $VmName -Path $IsoPath
           }
 
-          # 9. Montar ISO unattended como segundo DVD
-          $dvdUnattend = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue |
-                         Where-Object { $_.Path -eq $UnattendIsoPath }
-
-          if (-not $dvdUnattend) {
-            Add-VMDvdDrive -VMName $VmName -Path $UnattendIsoPath | Out-Null
-          }
-
-          # 10. Poner el DVD principal como primer dispositivo de arranque
-          $dvdBoot = Get-VMDvdDrive -VMName $VmName | Where-Object { $_.Path -eq $IsoPath }
-          Set-VMFirmware -VMName $VmName -FirstBootDevice $dvdBoot
-
-          # 11. Iniciar VM
-          try {
-            Start-VM -Name $VmName -ErrorAction SilentlyContinue
-            Write-Host "VM iniciada: $VmName. La instalación desatendida debería comenzar."
-          } catch {
-            Write-Host "ADVERTENCIA: no se pudo iniciar la VM $VmName : $($_.Exception.Message)"
-          }
-
-        parameters:
-          VmName: "{{ vm_name }}"
-          MemoryBytes: "{{ memory_bytes }}"
-          DiskBytes: "{{ disk_bytes }}"
-          CpuCount: "{{ cpu_count }}"
-          SwitchName: "{{ v_switch_eff }}"
-          IsoPath: "{{ iso_path_eff }}"
-          UnattendIsoPath: "{{ unattended_iso_path }}"
-          CandidateDrives: "{{ candidate_drives }}"
-      delegate_to: "{{ hyperv_host }}"
-      run_once: true
+          # 9. Montar ISO unattended co
