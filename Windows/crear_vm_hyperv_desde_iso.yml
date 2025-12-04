@@ -317,6 +317,17 @@
           Write-Host "Estableciendo orden de arranque (DVD -> Disco -> Red)..."
           Set-VMFirmware -VMName $VmName -BootOrder $bootOrder
 
+          Write-Host "Boot order DESPUÉS de Set-VMFirmware:"
+          (Get-VMFirmware -VMName $VmName).BootOrder |
+            ForEach-Object { $_.FirmwareDeviceName } |
+            ForEach-Object { " - $_" } | Out-String | Write-Host
+
+          # 12.1 Forzar explícitamente el primer dispositivo de arranque al DVD de Windows
+          if ($dvdMain) {
+            Write-Host "Forzando DVD principal como primer dispositivo de arranque..."
+            Set-VMFirmware -VMName $VmName -FirstBootDevice $dvdMain
+          }
+
           # 13. (Opcional) Asegurar plantilla de Secure Boot correcta
           $firm = Get-VMFirmware -VMName $VmName
           if ($firm.SecureBoot -eq $true -and $firm.SecureBootTemplate -ne 'MicrosoftWindows') {
