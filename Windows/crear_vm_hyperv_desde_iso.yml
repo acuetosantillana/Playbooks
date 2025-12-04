@@ -1,5 +1,5 @@
 ---
-- name: Crear VM en Hyper-V usando ISO en NAS (sin copiar ISO)
+- name: Crear VM en Hyper-V usando ISO en NAS (sin copiar ISO) + unattended
   hosts: localhost
   gather_facts: no
 
@@ -23,14 +23,14 @@
       - 'D'
       - 'E'
 
-    # ISO por defecto en NAS
+    # ISO por defecto en NAS (Windows)
     iso_path_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
     # Datos de la NAS (para el SMB Global Mapping)
     nas_server: '10.138.120.130'
     nas_share: 'isos'
-    nas_user: 'NASUSER_AQUI'   # se usará si NO mandas iso_user
-    nas_pass: 'NASPASS_AQUI'   # se usará si NO mandas iso_password
+    nas_user: 'NASUSER_AQUI'
+    nas_pass: 'NASPASS_AQUI'
 
   tasks:
 
@@ -42,7 +42,12 @@
           - memory_gb is defined
           - cpu is defined
           - disk_gb is defined
-        fail_msg: "Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb."
+          - vm_cidr is defined        # ej: 10.138.104.55/24
+          - vm_gateway is defined
+          - vm_dns1 is defined
+        fail_msg: >-
+          Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb,
+          vm_cidr, vm_gateway, vm_dns1.
 
     - name: Validar hyperv_host permitido
       ansible.builtin.assert:
@@ -57,6 +62,10 @@
         memory_bytes: "{{ (memory_gb | int) * 1073741824 }}"
         disk_bytes: "{{ (disk_gb | int) * 1073741824 }}"
         cpu_count: "{{ cpu | int }}"
+        # Rutas en la NAS para XML y ISO de unattended
+        unattended_nas_dir: "\\\\{{ nas_server }}\\{{ nas_share }}\\unattend_{{ vm_name }}"
+        unattended_xml_path: "{{ unattended_nas_dir }}\\autounattend.xml"
+        unattended_iso_path: "\\\\{{ nas_server }}\\{{ nas_share }}\\{{ vm_name }}_autounattend.iso"
 
     # -------------------------------------------------------------------
     # 1) Crear SMB Global Mapping para que Hyper-V pueda acceder a la NAS
@@ -95,16 +104,65 @@
         parameters:
           Server: "{{ nas_server }}"
           Share: "{{ nas_share }}"
-          # 👇 aquí el cambio importante: usa iso_user/iso_password si vienen en extra_vars
-          User: "{{ iso_user | default(nas_user) }}"
-          Pass: "{{ iso_password | default(nas_pass) }}"
+          User: "{{ nas_user }}"
+          Pass: "{{ nas_pass }}"
       delegate_to: "{{ hyperv_host }}"
       run_once: true
 
     # -------------------------------------------------------------------
-    # 2) Crear VM en Hyper-V usando ISO remota desde la NAS
+    # 2) Preparar carpeta y autounattend.xml en la NAS
     # -------------------------------------------------------------------
-    - name: Crear VM en Hyper-V con ISO en NAS
+    - name: Crear carpeta de unattended en la NAS
+      ansible.windows.win_powershell:
+        script: |
+          param(
+            [string]$DirPath
+          )
+          if (-not (Test-Path $DirPath)) {
+            New-Item -ItemType Directory -Path $DirPath | Out-Null
+          }
+        parameters:
+          DirPath: "{{ unattended_nas_dir }}"
+      delegate_to: "{{ hyperv_host }}"
+
+    - name: Generar autounattend.xml en la NAS para esta VM
+      ansible.builtin.template:
+        src: "templates/autounattend.xml.j2"
+        dest: "{{ unattended_xml_path }}"
+      delegate_to: "{{ hyperv_host }}"
+
+    # -------------------------------------------------------------------
+    # 3) Crear ISO de unattended directamente en la NAS
+    # -------------------------------------------------------------------
+    - name: Crear ISO autounattend en la NAS para esta VM
+      ansible.windows.win_powershell:
+        script: |
+          param(
+            [string]$XmlDir,
+            [string]$IsoPath
+          )
+
+          if (Test-Path $IsoPath) {
+            Remove-Item -Path $IsoPath -Force
+          }
+
+          try {
+            Import-Module PowerShellCookbook -ErrorAction Stop
+          } catch {
+            throw "No se pudo importar PowerShellCookbook. Asegúrate de tener New-IsoFile disponible en el host Hyper-V."
+          }
+
+          New-IsoFile -Source $XmlDir -Destination $IsoPath -Force
+          Write-Host "ISO de unattended creado en NAS: $IsoPath"
+        parameters:
+          XmlDir: "{{ unattended_nas_dir }}"
+          IsoPath: "{{ unattended_iso_path }}"
+      delegate_to: "{{ hyperv_host }}"
+
+    # -------------------------------------------------------------------
+    # 4) Crear VM en Hyper-V usando ISO remota desde la NAS + unattended
+    # -------------------------------------------------------------------
+    - name: Crear VM en Hyper-V con ISO en NAS + ISO unattended
       ansible.windows.win_powershell:
         script: |
           param(
@@ -114,6 +172,7 @@
             [int]$CpuCount,
             [string]$SwitchName,
             [string]$IsoPath,
+            [string]$UnattendIsoPath,
             [string[]]$CandidateDrives
           )
 
@@ -148,22 +207,24 @@
           Write-Host "Carpeta discos (vhdRoot): $vhdRoot"
           Write-Host "Disco VHDX              : $VhdPath"
 
-          # 3. Validar acceso a la ISO en la NAS (usa SMB Global Mapping)
-          $effectiveIsoPath = $null
-          if ($IsoPath -and $IsoPath.Trim() -ne '') {
-            if (-not (Test-Path $IsoPath)) {
-              throw "La ISO no es accesible desde este host: $IsoPath"
-            }
-            $effectiveIsoPath = $IsoPath
-            Write-Host "ISO remota a usar (NAS): $effectiveIsoPath"
+          # 3. Validar ISO Windows (NAS)
+          if (-not (Test-Path $IsoPath)) {
+            throw "La ISO de Windows no es accesible desde este host: $IsoPath"
           }
+          Write-Host "ISO Windows: $IsoPath"
 
-          # 4. Crear VHDX si no existe
+          # 4. Validar ISO unattended (NAS)
+          if (-not (Test-Path $UnattendIsoPath)) {
+            throw "La ISO de unattended no es accesible desde este host: $UnattendIsoPath"
+          }
+          Write-Host "ISO unattended (NAS): $UnattendIsoPath"
+
+          # 5. Crear VHDX si no existe
           if (-not (Test-Path $VhdPath)) {
             New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
           }
 
-          # 5. Crear VM si no existe
+          # 6. Crear VM si no existe
           if (-not (Get-VM -Name $VmName -ErrorAction SilentlyContinue)) {
             New-VM -Name $VmName `
                    -MemoryStartupBytes $MemoryBytes `
@@ -175,36 +236,40 @@
             Write-Host "La VM $VmName ya existe, no se crea de nuevo."
           }
 
-          # 6. CPU y memoria dinámica
+          # 7. CPU y memoria dinámica
           Set-VMProcessor -VMName $VmName -Count $CpuCount
           Set-VMMemory -VMName $VmName `
             -DynamicMemoryEnabled $true `
             -MinimumBytes 1GB `
             -MaximumBytes ($MemoryBytes * 2)
 
-          # 7. Montar ISO remota en DVD (sin copiar, usando UNC directo)
-          if ($effectiveIsoPath) {
-            Write-Host "Montando ISO remota en la VM: $effectiveIsoPath"
-
-            $dvd = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
-            if ($dvd) {
-              Set-VMDvdDrive -VMName $VmName `
-                -ControllerNumber $dvd.ControllerNumber `
-                -ControllerLocation $dvd.ControllerLocation `
-                -Path $effectiveIsoPath
-            } else {
-              Add-VMDvdDrive -VMName $VmName -Path $effectiveIsoPath | Out-Null
-            }
-
-            $dvd = Get-VMDvdDrive -VMName $VmName
-            Set-VMFirmware -VMName $VmName -FirstBootDevice $dvd
+          # 8. Montar ISO Windows en DVD principal
+          $dvdMain = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($dvdMain) {
+            Set-VMDvdDrive -VMName $VmName `
+              -ControllerNumber $dvdMain.ControllerNumber `
+              -ControllerLocation $dvdMain.ControllerLocation `
+              -Path $IsoPath
           } else {
-            Write-Host "ADVERTENCIA: no se montó ISO (ruta no válida)."
+            $dvdMain = Add-VMDvdDrive -VMName $VmName -Path $IsoPath
           }
 
-          # 8. Iniciar VM
+          # 9. Montar ISO unattended como segundo DVD
+          $dvdUnattend = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue |
+                         Where-Object { $_.Path -eq $UnattendIsoPath }
+
+          if (-not $dvdUnattend) {
+            Add-VMDvdDrive -VMName $VmName -Path $UnattendIsoPath | Out-Null
+          }
+
+          # 10. Poner el DVD principal como primer dispositivo de arranque
+          $dvdBoot = Get-VMDvdDrive -VMName $VmName | Where-Object { $_.Path -eq $IsoPath }
+          Set-VMFirmware -VMName $VmName -FirstBootDevice $dvdBoot
+
+          # 11. Iniciar VM
           try {
             Start-VM -Name $VmName -ErrorAction SilentlyContinue
+            Write-Host "VM iniciada: $VmName. La instalación desatendida debería comenzar."
           } catch {
             Write-Host "ADVERTENCIA: no se pudo iniciar la VM $VmName : $($_.Exception.Message)"
           }
@@ -216,6 +281,7 @@
           CpuCount: "{{ cpu_count }}"
           SwitchName: "{{ v_switch_eff }}"
           IsoPath: "{{ iso_path_eff }}"
+          UnattendIsoPath: "{{ unattended_iso_path }}"
           CandidateDrives: "{{ candidate_drives }}"
       delegate_to: "{{ hyperv_host }}"
       run_once: true
