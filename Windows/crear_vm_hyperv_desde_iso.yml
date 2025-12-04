@@ -113,99 +113,76 @@
     # -------------------------------------------------------------------
     # 2) Preparar carpeta y autounattend.xml en la NAS
     # -------------------------------------------------------------------
-    - name: Crear carpeta de unattended en la NAS
+    - name: Crear ISO autounattend en la NAS para esta VM (sin PowerShellCookbook)
       ansible.windows.win_powershell:
         script: |
           param(
-            [string]$DirPath
-          )
-          if (-not (Test-Path $DirPath)) {
-            New-Item -ItemType Directory -Path $DirPath | Out-Null
-          }
-        parameters:
-          DirPath: "{{ unattended_nas_dir }}"
-      delegate_to: "{{ hyperv_host }}"
-
-    - name: Generar autounattend.xml en la NAS para esta VM
-      ansible.builtin.template:
-        src: "templates/autounattend.xml.j2"
-        dest: "{{ unattended_xml_path }}"
-      delegate_to: "{{ hyperv_host }}"
-
-    # -------------------------------------------------------------------
-    # 3) Crear ISO de unattended directamente en la NAS
-    # -------------------------------------------------------------------
-    - name: Crear ISO autounattend en la NAS para esta VM
-      ansible.windows.win_powershell:
-        script: |
-          param(
-            [string]$XmlDir,
+            [string]$SourcePath,
             [string]$IsoPath
           )
     
-          # Habilitar TLS 1.2 por si el servidor tiene TLS viejito
-          try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          } catch {}
+          if (-not (Test-Path $SourcePath)) {
+            throw "La carpeta origen no existe: $SourcePath"
+          }
     
-          # Si ya existe el ISO, lo borramos
+          # Borrar ISO previo si existe
           if (Test-Path $IsoPath) {
             Remove-Item -Path $IsoPath -Force
           }
     
-          # Primero: ¿ya existe el comando New-IsoFile?
-          $cmd = Get-Command New-IsoFile -ErrorAction SilentlyContinue
-    
-          if (-not $cmd) {
-            # Verificar si el módulo ya existe
-            $mod = Get-Module -ListAvailable -Name PowerShellCookbook
-    
-            if (-not $mod) {
-              Write-Host "PowerShellCookbook no está instalado, intentando instalarlo desde PSGallery..."
-    
-              try {
-                Install-PackageProvider -Name NuGet -Force -Scope AllUsers -ErrorAction Stop
-              } catch {
-                throw "No se pudo instalar NuGet (requerido para PowerShellCookbook): $($_.Exception.Message)"
-              }
-    
-              try {
-                Set-PSRepository -Name 'PSGallery' -InstallationPolicy Trusted -ErrorAction Stop
-              } catch {
-                Write-Host "No se pudo marcar PSGallery como Trusted, se continúa igual..."
-              }
-    
-              try {
-                # OJO: aquí agregamos -AllowClobber
-                Install-Module -Name PowerShellCookbook -Force -Scope AllUsers -AllowClobber -ErrorAction Stop
-              } catch {
-                throw "No se pudo instalar PowerShellCookbook: $($_.Exception.Message)"
-              }
-            }
-    
-            try {
-              Import-Module PowerShellCookbook -ErrorAction Stop
-            } catch {
-              throw "No se pudo importar PowerShellCookbook aunque parece instalado: $($_.Exception.Message)"
-            }
-    
-            # Volvemos a buscar el comando
-            $cmd = Get-Command New-IsoFile -ErrorAction SilentlyContinue
-            if (-not $cmd) {
-              throw "New-IsoFile sigue sin existir incluso después de instalar PowerShellCookbook."
-            }
-          } else {
-            Write-Host "El comando New-IsoFile ya existe, no se instala PowerShellCookbook."
+          # Crear objeto de sistema de archivos ISO (IMAPI2)
+          try {
+            $fsi = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
+          } catch {
+            throw "No se pudo crear el objeto COM IMAPI2FS.MsftFileSystemImage. Verifica que IMAPI2 esté instalado: $($_.Exception.Message)"
           }
     
-          # Aquí ya asumimos que New-IsoFile está disponible
-          New-IsoFile -Source $XmlDir -Destination $IsoPath -Force
+          # UDF (4) suele ser suficiente, también se podría usar Joliet (2) o ISO9660 (1)
+          $fsi.FileSystemsToCreate = 4
+          $fsi.VolumeName = "UNATTEND"
+    
+          # Agregar todo el contenido de la carpeta al ISO
+          $root = $fsi.Root
+          $null = $root.AddTree($SourcePath, $true)
+    
+          # Generar la imagen
+          $result = $fsi.CreateResultImage()
+          $stream = $result.ImageStream
+    
+          # Usar ADODB.Stream para escribir a archivo
+          try {
+            $ado = New-Object -ComObject ADODB.Stream
+          } catch {
+            throw "No se pudo crear el objeto COM ADODB.Stream: $($_.Exception.Message)"
+          }
+    
+          $ado.Type = 1   # 1 = binary
+          $ado.Open()
+    
+          $bufferSize = 2048
+          $buffer = New-Object byte[] $bufferSize
+    
+          while ($true) {
+            $bytesRead = $stream.Read($buffer, $bufferSize)
+            if ($bytesRead -eq 0) { break }
+    
+            if ($bytesRead -lt $bufferSize) {
+              $ado.Write($buffer[0..($bytesRead-1)])
+            } else {
+              $ado.Write($buffer)
+            }
+          }
+    
+          # 2 = adSaveCreateOverWrite
+          $ado.SaveToFile($IsoPath, 2)
+          $ado.Close()
+    
           Write-Host "ISO de unattended creado en NAS: $IsoPath"
         parameters:
-          XmlDir: "{{ unattended_nas_dir }}"
+          SourcePath: "{{ unattended_nas_dir }}"
           IsoPath: "{{ unattended_iso_path }}"
       delegate_to: "{{ hyperv_host }}"
-      
+  
     # -------------------------------------------------------------------
     # 4) Crear VM en Hyper-V usando ISO remota desde la NAS + unattended
     # -------------------------------------------------------------------
