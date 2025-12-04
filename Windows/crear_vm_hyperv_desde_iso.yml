@@ -213,23 +213,25 @@
           }
 
           $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
+          Write-Host "Usando unidad $($bestDrive.Name): libre $([math]::Round($bestDrive.Free / 1GB, 2)) GB"
 
-          $root        = $bestDrive.Root.TrimEnd('\')      # "D:" o "E:"
-          $clusterRoot = Join-Path $root $VmName           # D:\VMNAME
+          # 2. Carpeta raíz tipo 'D:\NOMBRE-VM'
+          $root        = $bestDrive.Root             # D:\ o E:\
+          $clusterRoot = "$root\$VmName"    # D:\SMXPRE-PRUEBA
 
-          # 2. Carpeta para discos: D:\VMNAME\Virtual Hard Disks
-          if (-not (Test-Path $clusterRoot)) {
-            New-Item -ItemType Directory -Path $clusterRoot -Force | Out-Null
-          }
-          $vhdRoot = Join-Path $clusterRoot "Virtual Hard Disks"
-          if (-not (Test-Path $vhdRoot)) {
-            New-Item -ItemType Directory -Path $vhdRoot -Force | Out-Null
+          # Subcarpetas estándar dentro de D:\NOMBRE-VM\
+          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"           # D:\NOMBRE-VM\Snapshots
+          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"  # D:\NOMBRE-VM\Virtual Hard Disks
+          
+          foreach ($p in @($clusterRoot, $snapshotsRoot, $vhdRoot)) {
+            if (-not (Test-Path $p)) {
+              New-Item -ItemType Directory -Path $p -Force | Out-Null
+            }
           }
 
           $VmPath  = $root                              # Path de la VM → raíz del disco
           $VhdPath = Join-Path $vhdRoot "$VmName.vhdx"  # D:\VMNAME\Virtual Hard Disks\VMNAME.vhdx
 
-          Write-Host "Path base Hyper-V       : $VmPath"
           Write-Host "Carpeta discos (vhdRoot): $vhdRoot"
           Write-Host "Disco VHDX              : $VhdPath"
 
