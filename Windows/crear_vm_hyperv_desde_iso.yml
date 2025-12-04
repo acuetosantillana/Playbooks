@@ -183,6 +183,7 @@
           SourcePath: "{{ unattended_xml_dir }}"
           IsoPath: "{{ unattended_iso_path }}"
           OscdimgPath: "{{ oscdimg_path }}"
+
     # -------------------------------------------------------------------
     # 4) Crear VM en Hyper-V usando ISO de Windows en NAS + ISO unattended local
     # -------------------------------------------------------------------
@@ -278,7 +279,6 @@
           if ($vm.State -ne 'Off') {
             Write-Host "Apagando VM para ajustar firmware y DVDs..."
             Stop-VM -Name $VmName -TurnOff -Force
-            # Esperar un poco a que cambie el estado
             do {
               Start-Sleep -Seconds 1
               $vm = Get-VM -Name $VmName
@@ -297,12 +297,18 @@
             }
           }
 
-          # 10. Crear DVD principal con la ISO de Windows
-          $dvdMain = Add-VMDvdDrive -VMName $VmName -Path $IsoPath
+          # 10. Crear DVD principal con la ISO de Windows en SCSI 0:0 (booteable)
+          $dvdMain = Add-VMDvdDrive -VMName $VmName `
+                                    -ControllerNumber 0 `
+                                    -ControllerLocation 0 `
+                                    -Path $IsoPath
           Write-Host "DVD principal creado: Ctrl=$($dvdMain.ControllerNumber) Loc=$($dvdMain.ControllerLocation) Path=$($dvdMain.Path)"
 
-          # 11. Crear segundo DVD con la ISO de unattended
-          $dvdUnattend = Add-VMDvdDrive -VMName $VmName -Path $UnattendIsoPath
+          # 11. Crear segundo DVD con la ISO de unattended en SCSI 0:1
+          $dvdUnattend = Add-VMDvdDrive -VMName $VmName `
+                                        -ControllerNumber 0 `
+                                        -ControllerLocation 1 `
+                                        -Path $UnattendIsoPath
           Write-Host "DVD unattended creado: Ctrl=$($dvdUnattend.ControllerNumber) Loc=$($dvdUnattend.ControllerLocation) Path=$($dvdUnattend.Path)"
 
           # 12. Configurar orden de arranque: 1) DVD Windows 2) Disco 3) Red
@@ -317,18 +323,7 @@
           Write-Host "Estableciendo orden de arranque (DVD -> Disco -> Red)..."
           Set-VMFirmware -VMName $VmName -BootOrder $bootOrder
 
-          Write-Host "Boot order DESPUÉS de Set-VMFirmware:"
-          (Get-VMFirmware -VMName $VmName).BootOrder |
-            ForEach-Object { $_.FirmwareDeviceName } |
-            ForEach-Object { " - $_" } | Out-String | Write-Host
-
-          # 12.1 Forzar explícitamente el primer dispositivo de arranque al DVD de Windows
-          if ($dvdMain) {
-            Write-Host "Forzando DVD principal como primer dispositivo de arranque..."
-            Set-VMFirmware -VMName $VmName -FirstBootDevice $dvdMain
-          }
-
-          # 13. (Opcional) Asegurar plantilla de Secure Boot correcta
+          # 13. Asegurar plantilla de Secure Boot correcta
           $firm = Get-VMFirmware -VMName $VmName
           if ($firm.SecureBoot -eq $true -and $firm.SecureBootTemplate -ne 'MicrosoftWindows') {
             Write-Host "Ajustando plantilla de Secure Boot a 'MicrosoftWindows'..."
