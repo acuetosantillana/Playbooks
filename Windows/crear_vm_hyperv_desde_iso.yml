@@ -158,7 +158,14 @@
             Remove-Item -Path $IsoPath -Force
           }
 
-          $args = @('-n','-m', $SourcePath, $IsoPath)
+          $args = @(
+              '-n',           # long file names
+              '-m',           # media size unlimited
+              '-u2',          # UDF file system 2.0 (PRESERVA CASE SENSITIVITY)
+              '-udfver102',   # required for autounattend.xml detection
+              $SourcePath,
+              $IsoPath
+          )
 
           Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
 
