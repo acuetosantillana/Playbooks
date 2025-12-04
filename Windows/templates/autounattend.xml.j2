@@ -1,1 +1,197 @@
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <!-- PASO 1: WINDOWS PE (selección de imagen, particionado UEFI) -->
+  <settings pass="windowsPE">
+
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>es-MX</InputLocale>
+      <SystemLocale>es-MX</SystemLocale>
+      <UILanguage>es-MX</UILanguage>
+      <UserLocale>es-MX</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <!-- Selección de edición (ajusta el nombre si tu ISO es distinto) -->
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>Windows Server 2019 Datacenter (Desktop Experience)</Value>
+            </MetaData>
+          </InstallFrom>
+
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+      <!-- Particionado automático UEFI (disco 0) -->
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>100</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Label>System</Label>
+              <Format>FAT32</Format>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>3</PartitionID>
+              <Label>Windows</Label>
+              <Format>NTFS</Format>
+              <Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>Admin</FullName>
+        <Organization>Empresa</Organization>
+        <ProductKey></ProductKey>
+      </UserData>
+
+    </component>
+  </settings>
+
+  <!-- PASO 2: SPECIALIZE (hostname + red estática) -->
+  <settings pass="specialize">
+
+    <!-- Nombre del equipo -->
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <ComputerName>{{ vm_name }}</ComputerName>
+      <TimeZone>Central Standard Time (Mexico)</TimeZone>
+    </component>
+
+    <!-- Red estática -->
+    <component name="Microsoft-Windows-TCPIP"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <Interfaces>
+        <Interface wcm:action="add">
+          <Identifier>Ethernet</Identifier>
+
+          <Ipv4Settings>
+            <DhcpEnabled>false</DhcpEnabled>
+          </Ipv4Settings>
+
+          <!-- IP + máscara en formato CIDR: vm_cidr (ej: 10.138.104.55/24) -->
+          <UnicastIpAddresses>
+            <IpAddress wcm:action="add" wcm:keyValue="1">{{ vm_cidr }}</IpAddress>
+          </UnicastIpAddresses>
+
+          <!-- Gateway -->
+          <Gateway>
+            <Route wcm:action="add" wcm:keyValue="0">
+              <Identifier>0</Identifier>
+              <NextHop>{{ vm_gateway }}</NextHop>
+            </Route>
+          </Gateway>
+
+          <!-- DNS -->
+          <DnsServers>
+            <DnsServer wcm:action="add" wcm:keyValue="1">{{ vm_dns1 }}</DnsServer>
+            <DnsServer wcm:action="add" wcm:keyValue="2">{{ vm_dns2 }}</DnsServer>
+          </DnsServers>
+
+        </Interface>
+      </Interfaces>
+    </component>
+
+  </settings>
+
+  <!-- PASO 3: OOBE (saltarlo y poner password de Administrator) -->
+  <settings pass="oobeSystem">
+
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>es-MX</InputLocale>
+      <SystemLocale>es-MX</SystemLocale>
+      <UILanguage>es-MX</UILanguage>
+      <UserLocale>es-MX</UserLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>Passw0rd.</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+
+      <AutoLogon>
+        <Password>
+          <Value>Passw0rd.</Value>
+          <PlainText>true</PlainText>
+        </Password>
+        <Enabled>true</Enabled>
+        <Username>Administrator</Username>
+      </AutoLogon>
+
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+
+    </component>
+  </settings>
+
+</unattend>
 
