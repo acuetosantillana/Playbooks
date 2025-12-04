@@ -252,19 +252,44 @@
             Write-Host "El VHDX ya existe: $VhdPath"
           }
 
-          # 6. Crear VM si no existe
+          # 6. Crear VM si no existe (SIN VHD, para controlar nosotros el puerto)
           $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
           if (-not $vm) {
             New-VM -Name $VmName `
                    -MemoryStartupBytes $MemoryBytes `
                    -Generation 2 `
-                   -VHDPath $VhdPath `
                    -SwitchName $SwitchName `
-                   -Path $VmPath | Out-Null
+                   -Path $VmPath `
+                   -NoVHD | Out-Null
             $vm = Get-VM -Name $VmName
             Write-Host "VM creada: $VmName"
           } else {
             Write-Host "La VM $VmName ya existe, no se crea de nuevo."
+          }
+
+          # 6.1 Asegurar que el VHD del SO esté en SCSI 0:2 (no 0:0 / 0:1)
+          $osDisk = Get-VMHardDiskDrive -VMName $VmName -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Path -eq $VhdPath }
+
+          if ($osDisk) {
+            if ($osDisk.ControllerNumber -ne 0 -or $osDisk.ControllerLocation -ne 2) {
+              Write-Host "Moviendo VHD del SO a SCSI 0:2..."
+              Remove-VMHardDiskDrive -VMName $VmName `
+                                     -ControllerNumber $osDisk.ControllerNumber `
+                                     -ControllerLocation $osDisk.ControllerLocation
+              Add-VMHardDiskDrive -VMName $VmName `
+                                   -ControllerNumber 0 `
+                                   -ControllerLocation 2 `
+                                   -Path $VhdPath | Out-Null
+            } else {
+              Write-Host "VHD del SO ya está en SCSI 0:2."
+            }
+          } else {
+            Write-Host "Adjuntando VHD del SO en SCSI 0:2..."
+            Add-VMHardDiskDrive -VMName $VmName `
+                                 -ControllerNumber 0 `
+                                 -ControllerLocation 2 `
+                                 -Path $VhdPath | Out-Null
           }
 
           # 7. CPU y memoria dinámica
