@@ -3,7 +3,7 @@
           xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
-  <!-- PASO 1: WINDOWS PE (selección de imagen, particionado UEFI) -->
+  <!-- PASO 1: WINDOWS PE -->
   <settings pass="windowsPE">
 
     <component name="Microsoft-Windows-International-Core-WinPE"
@@ -11,10 +11,16 @@
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
+      
+      <SetupUILanguage>
+        <UILanguage>es-MX</UILanguage>
+      </SetupUILanguage>
+
       <InputLocale>es-MX</InputLocale>
       <SystemLocale>es-MX</SystemLocale>
       <UILanguage>es-MX</UILanguage>
       <UserLocale>es-MX</UserLocale>
+
     </component>
 
     <component name="Microsoft-Windows-Setup"
@@ -23,12 +29,12 @@
                language="neutral"
                versionScope="nonSxS">
 
-      <!-- Selección de edición (ajusta el nombre si tu ISO es distinto) -->
       <ImageInstall>
         <OSImage>
+          <!-- USAR INDEX PARA EVITAR ERRORES -->
           <InstallFrom>
             <MetaData wcm:action="add">
-              <Key>/IMAGE/NAME</Key>
+              <Key>/IMAGE/INDEX</Key>
               <Value>4</Value>
             </MetaData>
           </InstallFrom>
@@ -38,11 +44,10 @@
             <PartitionID>3</PartitionID>
           </InstallTo>
 
-          <WillShowUI>OnError</WillShowUI>
+          <WillShowUI>Never</WillShowUI>
         </OSImage>
       </ImageInstall>
 
-      <!-- Particionado automático UEFI (disco 0) -->
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
@@ -81,6 +86,7 @@
               <Letter>C</Letter>
             </ModifyPartition>
           </ModifyPartitions>
+
         </Disk>
       </DiskConfiguration>
 
@@ -88,16 +94,14 @@
         <AcceptEula>true</AcceptEula>
         <FullName>Admin</FullName>
         <Organization>Empresa</Organization>
-        <ProductKey></ProductKey>
       </UserData>
 
     </component>
   </settings>
 
-  <!-- PASO 2: SPECIALIZE (hostname + red estática) -->
+  <!-- PASO 2: SPECIALIZE -->
   <settings pass="specialize">
 
-    <!-- Nombre del equipo -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -107,7 +111,6 @@
       <TimeZone>Central Standard Time (Mexico)</TimeZone>
     </component>
 
-    <!-- Red estática -->
     <component name="Microsoft-Windows-TCPIP"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -122,12 +125,10 @@
             <DhcpEnabled>false</DhcpEnabled>
           </Ipv4Settings>
 
-          <!-- IP + máscara en formato CIDR: vm_cidr (ej: 10.138.104.55/24) -->
           <UnicastIpAddresses>
             <IpAddress wcm:action="add" wcm:keyValue="1">{{ vm_cidr }}</IpAddress>
           </UnicastIpAddresses>
 
-          <!-- Gateway -->
           <Gateway>
             <Route wcm:action="add" wcm:keyValue="0">
               <Identifier>0</Identifier>
@@ -135,7 +136,6 @@
             </Route>
           </Gateway>
 
-          <!-- DNS -->
           <DnsServers>
             <DnsServer wcm:action="add" wcm:keyValue="1">{{ vm_dns1 }}</DnsServer>
             <DnsServer wcm:action="add" wcm:keyValue="2">{{ vm_dns2 }}</DnsServer>
@@ -143,23 +143,13 @@
 
         </Interface>
       </Interfaces>
+
     </component>
 
   </settings>
 
-  <!-- PASO 3: OOBE (saltarlo y poner password de Administrator) -->
+  <!-- PASO 3: OOBE -->
   <settings pass="oobeSystem">
-
-    <component name="Microsoft-Windows-International-Core"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-      <InputLocale>es-MX</InputLocale>
-      <SystemLocale>es-MX</SystemLocale>
-      <UILanguage>es-MX</UILanguage>
-      <UserLocale>es-MX</UserLocale>
-    </component>
 
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
@@ -179,8 +169,8 @@
           <Value>Passw0rd.</Value>
           <PlainText>true</PlainText>
         </Password>
-        <Enabled>true</Enabled>
         <Username>Administrator</Username>
+        <Enabled>true</Enabled>
       </AutoLogon>
 
       <OOBE>
@@ -194,4 +184,3 @@
   </settings>
 
 </unattend>
-
