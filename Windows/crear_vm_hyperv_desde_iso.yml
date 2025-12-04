@@ -75,7 +75,7 @@
         unattended_iso_path: "C:\\ISOs\\{{ vm_name }}_autounattend.iso"
 
     # -------------------------------------------------------------------
-    # 1) Crear SMB Global Mapping para que Hyper-V pueda acceder a la ISO en la NAS
+    # 1) SMB Global Mapping para que Hyper-V vea la ISO en la NAS
     # -------------------------------------------------------------------
     - name: Crear SMB Global Mapping hacia la NAS para Hyper-V
       ansible.windows.win_powershell:
@@ -93,15 +93,11 @@
           $cred = New-Object System.Management.Automation.PSCredential($User, $sec)
 
           try {
-            # Revisar si ya existe el Global Mapping
             $existing = Get-SmbGlobalMapping -RemotePath $remotePath -ErrorAction SilentlyContinue
             if ($existing) {
               Write-Host "MAPPING-ALREADY: $remotePath"
             } else {
-              # Por si hay conexiones SMB normales (Error 1219)
-              try {
-                net use $remotePath /delete /y | Out-Null
-              } catch { }
+              try { net use $remotePath /delete /y | Out-Null } catch { }
 
               New-SmbGlobalMapping `
                 -RemotePath $remotePath `
@@ -121,7 +117,7 @@
           Pass: "{{ nas_pass }}"
 
     # -------------------------------------------------------------------
-    # 2) Preparar carpetas locales y generar autounattend.xml en el Hyper-V
+    # 2) Carpetas y autounattend.xml
     # -------------------------------------------------------------------
     - name: Crear carpeta local para autounattend.xml
       ansible.windows.win_file:
@@ -158,24 +154,18 @@
             throw "No se encontró oscdimg.exe en: $OscdimgPath"
           }
 
-          # Borrar ISO previo si existe
           if (Test-Path $IsoPath) {
             Remove-Item -Path $IsoPath -Force
           }
 
-          $args = @(
-            '-n',    # nombres largos habilitados
-            '-m',    # permitir tamaño grande
-            $SourcePath,
-            $IsoPath
-          )
+          $args = @('-n','-m', $SourcePath, $IsoPath)
 
           Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
 
           $p = Start-Process -FilePath $OscdimgPath -ArgumentList $args -Wait -PassThru -NoNewWindow
 
           if ($p.ExitCode -ne 0) {
-            throw "oscdimg terminó con código $($p.ExitCode). Revisa la ruta y permisos."
+            throw "oscdimg terminó con código $($p.ExitCode)."
           }
 
           Write-Host "ISO de unattended creado localmente: $IsoPath"
@@ -185,7 +175,7 @@
           OscdimgPath: "{{ oscdimg_path }}"
 
     # -------------------------------------------------------------------
-    # 4) Crear VM en Hyper-V usando ISO de Windows en NAS + ISO unattended local
+    # 4) Crear/ajustar VM, VHD, DVDs y firmware
     # -------------------------------------------------------------------
     - name: Crear VM en Hyper-V con ISO en NAS + ISO unattended
       ansible.windows.win_powershell:
@@ -203,11 +193,10 @@
 
           Import-Module Hyper-V
 
-          # 1. Elegir la unidad con más espacio libre (D o E)
+          # 1. Unidad con más espacio libre (D/E)
           $drives = foreach ($d in $CandidateDrives) {
             try { Get-PSDrive -Name $d -ErrorAction Stop } catch { $null }
           }
-
           if (-not $drives) {
             throw "Ninguna de las unidades candidatas ($($CandidateDrives -join ', ')) existe en este host."
           }
@@ -216,8 +205,8 @@
           Write-Host "Usando unidad $($bestDrive.Name): libre $([math]::Round($bestDrive.Free / 1GB, 2)) GB"
 
           # 2. Carpetas de la VM
-          $root        = $bestDrive.Root             # D:\ o E:\
-          $clusterRoot = "$root\$VmName"             # D:\VMNAME
+          $root        = $bestDrive.Root
+          $clusterRoot = "$root\$VmName"
           $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
           $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"
 
@@ -227,32 +216,30 @@
             }
           }
 
-          $VmPath  = $root                              # Path de la VM → raíz del disco
-          $VhdPath = Join-Path $vhdRoot "$VmName.vhdx"  # D:\VMNAME\Virtual Hard Disks\VMNAME.vhdx
+          $VmPath  = $root
+          $VhdPath = Join-Path $vhdRoot "$VmName.vhdx"
 
           Write-Host "Carpeta discos (vhdRoot): $vhdRoot"
           Write-Host "Disco VHDX              : $VhdPath"
 
-          # 3. Validar ISO Windows (NAS)
+          # 3. Validar ISOs
           if (-not (Test-Path $IsoPath)) {
             throw "La ISO de Windows no es accesible desde este host: $IsoPath"
           }
-          Write-Host "ISO Windows: $IsoPath"
-
-          # 4. Validar ISO unattended local
           if (-not (Test-Path $UnattendIsoPath)) {
             throw "La ISO de unattended no es accesible desde este host: $UnattendIsoPath"
           }
-          Write-Host "ISO unattended (local): $UnattendIsoPath"
+          Write-Host "ISO Windows   : $IsoPath"
+          Write-Host "ISO unattended: $UnattendIsoPath"
 
-          # 5. Crear VHDX si no existe
+          # 4. Crear VHDX si no existe
           if (-not (Test-Path $VhdPath)) {
             New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
           } else {
             Write-Host "El VHDX ya existe: $VhdPath"
           }
 
-          # 6. Crear VM si no existe (SIN VHD, para controlar nosotros el puerto)
+          # 5. Crear VM SIN VHD (NoVHD) para controlar puertos
           $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
           if (-not $vm) {
             New-VM -Name $VmName `
@@ -267,7 +254,7 @@
             Write-Host "La VM $VmName ya existe, no se crea de nuevo."
           }
 
-          # 6.1 Asegurar que el VHD del SO esté en SCSI 0:2 (no 0:0 / 0:1)
+          # 6. Asegurar VHD en SCSI 0:2
           $osDisk = Get-VMHardDiskDrive -VMName $VmName -ErrorAction SilentlyContinue |
                     Where-Object { $_.Path -eq $VhdPath }
 
@@ -299,7 +286,7 @@
             -MinimumBytes 1GB `
             -MaximumBytes ($MemoryBytes * 2)
 
-          # 8. Asegurar que la VM esté APAGADA antes de tocar firmware/DVD
+          # 8. Apagar VM antes de toquetear firmware/DVD
           $vm = Get-VM -Name $VmName
           if ($vm.State -ne 'Off') {
             Write-Host "Apagando VM para ajustar firmware y DVDs..."
@@ -310,7 +297,7 @@
             } while ($vm.State -ne 'Off')
           }
 
-          # 9. Borrar TODOS los DVD drives existentes (si los hay)
+          # 9. Limpiar DVDs previos
           $existingDvds = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
           if ($existingDvds) {
             $existingDvds | ForEach-Object {
@@ -322,42 +309,42 @@
             }
           }
 
-          # 10. Crear DVD principal con la ISO de Windows en SCSI 0:0 (booteable)
+          # 10. DVD principal (Windows) en SCSI 0:0
           $dvdMain = Add-VMDvdDrive -VMName $VmName `
                                     -ControllerNumber 0 `
                                     -ControllerLocation 0 `
                                     -Path $IsoPath
           Write-Host "DVD principal creado: Ctrl=$($dvdMain.ControllerNumber) Loc=$($dvdMain.ControllerLocation) Path=$($dvdMain.Path)"
 
-          # 11. Crear segundo DVD con la ISO de unattended en SCSI 0:1
+          # 11. DVD unattended en SCSI 0:1
           $dvdUnattend = Add-VMDvdDrive -VMName $VmName `
                                         -ControllerNumber 0 `
                                         -ControllerLocation 1 `
                                         -Path $UnattendIsoPath
           Write-Host "DVD unattended creado: Ctrl=$($dvdUnattend.ControllerNumber) Loc=$($dvdUnattend.ControllerLocation) Path=$($dvdUnattend.Path)"
 
-          # 12. Configurar orden de arranque a través del primer dispositivo (DVD Windows)
+          # 12. Configurar firmware:
+          #     - Primer boot device = DVD Windows
+          #     - BootOrder sin adaptador de red (solo DVD y disco)
           $hdd  = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
 
-          Write-Host "Forzando DVD principal como primer dispositivo de arranque..."
+          $bootOrder = @()
+          if ($dvdMain) { $bootOrder += $dvdMain }
+          if ($hdd)     { $bootOrder += $hdd }
+
+          Write-Host "Aplicando firmware: FirstBootDevice = DVD y sin PXE..."
           Set-VMFirmware -VMName $VmName `
             -FirstBootDevice $dvdMain `
+            -BootOrder $bootOrder `
             -EnableSecureBoot On `
             -SecureBootTemplate 'MicrosoftWindows'
 
-          Write-Host "Boot order DESPUÉS de Set-VMFirmware -FirstBootDevice:"
+          Write-Host "Boot order resultante:"
           (Get-VMFirmware -VMName $VmName).BootOrder |
-            ForEach-Object { $_.FirmwareDeviceName } |
-            ForEach-Object { ' - ' + $_ } | Out-String | Write-Host
+            ForEach-Object { ' - ' + $_.FirmwareDeviceName } |
+            Out-String | Write-Host
 
-          # 13. Asegurar plantilla de Secure Boot correcta
-          $firm = Get-VMFirmware -VMName $VmName
-          if ($firm.SecureBoot -eq $true -and $firm.SecureBootTemplate -ne 'MicrosoftWindows') {
-            Write-Host "Ajustando plantilla de Secure Boot a 'MicrosoftWindows'..."
-            Set-VMFirmware -VMName $VmName -EnableSecureBoot On -SecureBootTemplate 'MicrosoftWindows'
-          }
-
-          # 14. Iniciar la VM
+          # 13. Iniciar la VM
           $vm = Get-VM -Name $VmName
           if ($vm.State -ne 'Running') {
             Start-VM -Name $VmName | Out-Null
