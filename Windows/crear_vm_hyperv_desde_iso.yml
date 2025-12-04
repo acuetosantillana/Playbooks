@@ -26,7 +26,7 @@
     # ISO por defecto en NAS (Windows)
     iso_path_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
-    # Datos de la NAS (para el SMB Global Mapping)
+    # Datos de la NAS (para el SMB Global Mapping, solo para la ISO de Windows)
     nas_server: '10.138.120.130'
     nas_share: 'isos'
     nas_user: 'NASUSER_AQUI'
@@ -34,6 +34,9 @@
 
   tasks:
 
+    # -------------------------------------------------------------------
+    # 0) Validaciones y normalización
+    # -------------------------------------------------------------------
     - name: Validar variables obligatorias
       ansible.builtin.assert:
         that:
@@ -42,7 +45,7 @@
           - memory_gb is defined
           - cpu is defined
           - disk_gb is defined
-          - vm_cidr is defined        # ej: 10.138.104.55/24
+          - vm_cidr is defined       # ej: 10.138.104.55/24
           - vm_gateway is defined
           - vm_dns1 is defined
         fail_msg: >-
@@ -62,11 +65,11 @@
         memory_bytes: "{{ (memory_gb | int) * 1073741824 }}"
         disk_bytes: "{{ (disk_gb | int) * 1073741824 }}"
         cpu_count: "{{ cpu | int }}"
-    
-    # Rutas en la NAS para XML y ISO de unattended
-        unattended_nas_dir: "\\\\{{ nas_server }}\\{{ nas_share }}\\unattend_{{ vm_name }}"
-        unattended_xml_path: "\\\\{{ nas_server }}\\{{ nas_share }}\\unattend_{{ vm_name }}\\autounattend.xml"
-        unattended_iso_path: "\\\\{{ nas_server }}\\{{ nas_share }}\\{{ vm_name }}_autounattend.iso"
+
+        # Rutas LOCALES en el host Hyper-V para unattended
+        unattended_xml_dir: "C:\\autounattend\\{{ vm_name }}"
+        unattended_xml_path: "C:\\autounattend\\{{ vm_name }}\\autounattend.xml"
+        unattended_iso_path: "C:\\ISOs\\{{ vm_name }}_autounattend.iso"
 
     # -------------------------------------------------------------------
     # 1) Crear SMB Global Mapping para que Hyper-V pueda acceder a la NAS
@@ -111,80 +114,100 @@
       run_once: true
 
     # -------------------------------------------------------------------
-    # 2) Preparar carpeta y autounattend.xml en la NAS
+    # 2) Preparar carpetas locales y generar autounattend.xml en el Hyper-V
     # -------------------------------------------------------------------
-    - name: Crear ISO autounattend en la NAS para esta VM (sin PowerShellCookbook)
+    - name: Crear carpeta local para autounattend.xml
+      ansible.windows.win_file:
+        path: "{{ unattended_xml_dir }}"
+        state: directory
+      delegate_to: "{{ hyperv_host }}"
+
+    - name: Crear carpeta local para ISOs de unattended
+      ansible.windows.win_file:
+        path: "C:\\ISOs"
+        state: directory
+      delegate_to: "{{ hyperv_host }}"
+
+    - name: Generar autounattend.xml en el host Hyper-V para esta VM
+      ansible.builtin.template:
+        src: "templates/autounattend.xml.j2"
+        dest: "{{ unattended_xml_path }}"
+      delegate_to: "{{ hyperv_host }}"
+
+    # -------------------------------------------------------------------
+    # 3) Crear ISO de unattended local en el host Hyper-V (sin módulos externos)
+    # -------------------------------------------------------------------
+    - name: Crear ISO autounattend local en el host Hyper-V (sin PowerShellCookbook)
       ansible.windows.win_powershell:
         script: |
           param(
             [string]$SourcePath,
             [string]$IsoPath
           )
-    
+
           if (-not (Test-Path $SourcePath)) {
             throw "La carpeta origen no existe: $SourcePath"
           }
-    
+
           # Borrar ISO previo si existe
           if (Test-Path $IsoPath) {
             Remove-Item -Path $IsoPath -Force
           }
-    
+
           # Crear objeto de sistema de archivos ISO (IMAPI2)
           try {
             $fsi = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
           } catch {
-            throw "No se pudo crear el objeto COM IMAPI2FS.MsftFileSystemImage. Verifica que IMAPI2 esté instalado: $($_.Exception.Message)"
+            throw "No se pudo crear el objeto COM IMAPI2FS.MsftFileSystemImage. Verifica que IMAPI2 esté disponible: $($_.Exception.Message)"
           }
-    
-          # UDF (4) suele ser suficiente, también se podría usar Joliet (2) o ISO9660 (1)
-          $fsi.FileSystemsToCreate = 4
+
+          $fsi.FileSystemsToCreate = 4   # UDF
           $fsi.VolumeName = "UNATTEND"
-    
+
           # Agregar todo el contenido de la carpeta al ISO
           $root = $fsi.Root
           $null = $root.AddTree($SourcePath, $true)
-    
+
           # Generar la imagen
           $result = $fsi.CreateResultImage()
           $stream = $result.ImageStream
-    
+
           # Usar ADODB.Stream para escribir a archivo
           try {
             $ado = New-Object -ComObject ADODB.Stream
           } catch {
             throw "No se pudo crear el objeto COM ADODB.Stream: $($_.Exception.Message)"
           }
-    
+
           $ado.Type = 1   # 1 = binary
           $ado.Open()
-    
+
           $bufferSize = 2048
           $buffer = New-Object byte[] $bufferSize
-    
+
           while ($true) {
             $bytesRead = $stream.Read($buffer, $bufferSize)
             if ($bytesRead -eq 0) { break }
-    
+
             if ($bytesRead -lt $bufferSize) {
               $ado.Write($buffer[0..($bytesRead-1)])
             } else {
               $ado.Write($buffer)
             }
           }
-    
+
           # 2 = adSaveCreateOverWrite
           $ado.SaveToFile($IsoPath, 2)
           $ado.Close()
-    
-          Write-Host "ISO de unattended creado en NAS: $IsoPath"
+
+          Write-Host "ISO de unattended creado localmente: $IsoPath"
         parameters:
-          SourcePath: "{{ unattended_nas_dir }}"
+          SourcePath: "{{ unattended_xml_dir }}"
           IsoPath: "{{ unattended_iso_path }}"
       delegate_to: "{{ hyperv_host }}"
-  
+
     # -------------------------------------------------------------------
-    # 4) Crear VM en Hyper-V usando ISO remota desde la NAS + unattended
+    # 4) Crear VM en Hyper-V usando ISO de Windows en NAS + ISO unattended local
     # -------------------------------------------------------------------
     - name: Crear VM en Hyper-V con ISO en NAS + ISO unattended
       ansible.windows.win_powershell:
@@ -237,11 +260,11 @@
           }
           Write-Host "ISO Windows: $IsoPath"
 
-          # 4. Validar ISO unattended (NAS)
+          # 4. Validar ISO unattended local
           if (-not (Test-Path $UnattendIsoPath)) {
             throw "La ISO de unattended no es accesible desde este host: $UnattendIsoPath"
           }
-          Write-Host "ISO unattended (NAS): $UnattendIsoPath"
+          Write-Host "ISO unattended (local): $UnattendIsoPath"
 
           # 5. Crear VHDX si no existe
           if (-not (Test-Path $VhdPath)) {
