@@ -215,14 +215,12 @@
           $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
           Write-Host "Usando unidad $($bestDrive.Name): libre $([math]::Round($bestDrive.Free / 1GB, 2)) GB"
 
-          # 2. Carpeta raíz tipo 'D:\NOMBRE-VM'
+          # 2. Carpetas de la VM
           $root        = $bestDrive.Root             # D:\ o E:\
-          $clusterRoot = "$root\$VmName"    # D:\SMXPRE-PRUEBA
+          $clusterRoot = "$root\$VmName"             # D:\VMNAME
+          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
+          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"
 
-          # Subcarpetas estándar dentro de D:\NOMBRE-VM\
-          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"           # D:\NOMBRE-VM\Snapshots
-          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"  # D:\NOMBRE-VM\Virtual Hard Disks
-          
           foreach ($p in @($clusterRoot, $snapshotsRoot, $vhdRoot)) {
             if (-not (Test-Path $p)) {
               New-Item -ItemType Directory -Path $p -Force | Out-Null
@@ -276,45 +274,33 @@
             -MinimumBytes 1GB `
             -MaximumBytes ($MemoryBytes * 2)
 
-          # 8. Montar ISO Windows en DVD principal
-          $dvdDrives = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
+          # --- AQUÍ VIENE LA PARTE IMPORTANTE DE LOS DVD ---
 
-          if ($dvdDrives) {
-            $dvdMain = $dvdDrives | Sort-Object ControllerNumber, ControllerLocation | Select-Object -First 1
-            Set-VMDvdDrive -VMName $VmName `
-              -ControllerNumber $dvdMain.ControllerNumber `
-              -ControllerLocation $dvdMain.ControllerLocation `
-              -Path $IsoPath
-          } else {
-            $dvdMain = Add-VMDvdDrive -VMName $VmName -Path $IsoPath
+          # 8. Borrar TODOS los DVD drives existentes (si los hay)
+          $existingDvds = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
+          if ($existingDvds) {
+            $existingDvds | ForEach-Object {
+              Write-Host "Eliminando DVD drive: Ctrl=$($_.ControllerNumber) Loc=$($_.ControllerLocation) Path=$($_.Path)"
+              Remove-VMDvdDrive -VMName $VmName `
+                                -ControllerNumber $_.ControllerNumber `
+                                -ControllerLocation $_.ControllerLocation `
+                                -Confirm:$false
+            }
           }
 
-          # 9. Montar ISO unattended como segundo DVD
-          $dvdDrives = Get-VMDvdDrive -VMName $VmName | Sort-Object ControllerNumber, ControllerLocation
-          if ($dvdDrives.Count -ge 2) {
-            $dvdUnattend = $dvdDrives[1]
-            Set-VMDvdDrive -VMName $VmName `
-              -ControllerNumber $dvdUnattend.ControllerNumber `
-              -ControllerLocation $dvdUnattend.ControllerLocation `
-              -Path $UnattendIsoPath
-          } else {
-            # Suponemos mismo controlador, siguiente ubicación
-            $ctrlNum  = $dvdMain.ControllerNumber
-            $ctrlLoc2 = $dvdMain.ControllerLocation + 1
-            Add-VMDvdDrive -VMName $VmName `
-              -ControllerNumber $ctrlNum `
-              -ControllerLocation $ctrlLoc2 `
-              -Path $UnattendIsoPath | Out-Null
-          }
+          # 9. Crear DVD principal con la ISO de Windows
+          $dvdMain = Add-VMDvdDrive -VMName $VmName -Path $IsoPath
+          Write-Host "DVD principal creado: Ctrl=$($dvdMain.ControllerNumber) Loc=$($dvdMain.ControllerLocation) Path=$($dvdMain.Path)"
 
-          # 10. Forzar arranque desde DVD
+          # 10. Crear segundo DVD con la ISO de unattended
+          $dvdUnattend = Add-VMDvdDrive -VMName $VmName -Path $UnattendIsoPath
+          Write-Host "DVD unattended creado: Ctrl=$($dvdUnattend.ControllerNumber) Loc=$($dvdUnattend.ControllerLocation) Path=$($dvdUnattend.Path)"
+
+          # 11. Forzar arranque desde el DVD principal
           $firm = Get-VMFirmware -VMName $VmName
-          $dvdBoot = Get-VMDvdDrive -VMName $VmName | Select-Object -First 1
-          if ($dvdBoot) {
-            Set-VMFirmware -VMName $VmName -FirstBootDevice $dvdBoot
-          }
+          Set-VMFirmware -VMName $VmName -FirstBootDevice $dvdMain
 
-          # 11. Iniciar la VM
+          # 12. Iniciar la VM
           if ($vm.State -ne 'Running') {
             Start-VM -Name $VmName | Out-Null
             Write-Host "VM iniciada: $VmName"
@@ -332,3 +318,4 @@
           IsoPath: "{{ iso_path_eff }}"
           UnattendIsoPath: "{{ unattended_iso_path }}"
           CandidateDrives: "{{ candidate_drives }}"
+
