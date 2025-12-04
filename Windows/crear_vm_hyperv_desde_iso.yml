@@ -338,7 +338,6 @@
 
           # 12. Configurar orden de arranque a través del primer dispositivo (DVD Windows)
           $hdd  = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
-          $net  = Get-VMNetworkAdapter -VMName $VmName | Select-Object -First 1
 
           Write-Host "Forzando DVD principal como primer dispositivo de arranque..."
           Set-VMFirmware -VMName $VmName `
@@ -350,16 +349,6 @@
           (Get-VMFirmware -VMName $VmName).BootOrder |
             ForEach-Object { $_.FirmwareDeviceName } |
             ForEach-Object { ' - ' + $_ } | Out-String | Write-Host
-
-          # 13. Iniciar la VM
-          $vm = Get-VM -Name $VmName
-          if ($vm.State -ne 'Running') {
-            Start-VM -Name $VmName | Out-Null
-            Write-Host "VM iniciada: $VmName"
-          } else {
-            Write-Host "La VM $VmName ya estaba corriendo."
-          }
-
 
           # 13. Asegurar plantilla de Secure Boot correcta
           $firm = Get-VMFirmware -VMName $VmName
