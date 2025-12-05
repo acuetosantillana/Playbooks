@@ -163,14 +163,8 @@
 
           # Queremos que la RAÍZ de la ISO tenga directamente autounattend.xml
           # y que respete minúsculas/mayúsculas.
-          $args = @(
-            '-n',           # nombres largos
-            '-m',           # sin límite de tamaño
-            '-u2',          # UDF 2.0
-            '-udfver102',   # versión UDF
-            $SourcePath,    # carpeta que contiene autounattend.xml
-            $IsoPath
-          )
+          $args = @('-n','-m','-u2','-udfver102', $SourcePath, $IsoPath)
+
 
           Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
 
