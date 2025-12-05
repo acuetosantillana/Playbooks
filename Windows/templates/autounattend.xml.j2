@@ -6,21 +6,20 @@
   <!-- PASO 1: WINDOWS PE -->
   <settings pass="windowsPE">
 
+    <!-- AQUÍ OBLIGAMOS A USAR EN-US PARA QUE NO FALLE WINPE -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
-      
       <SetupUILanguage>
-        <UILanguage>es-MX</UILanguage>
+        <UILanguage>en-US</UILanguage>
       </SetupUILanguage>
 
-      <InputLocale>es-MX</InputLocale>
-      <SystemLocale>es-MX</SystemLocale>
-      <UILanguage>es-MX</UILanguage>
-      <UserLocale>es-MX</UserLocale>
-
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
     </component>
 
     <component name="Microsoft-Windows-Setup"
@@ -31,7 +30,6 @@
 
       <ImageInstall>
         <OSImage>
-          <!-- USAR INDEX PARA EVITAR ERRORES -->
           <InstallFrom>
             <MetaData wcm:action="add">
               <Key>/IMAGE/INDEX</Key>
@@ -102,6 +100,18 @@
   <!-- PASO 2: SPECIALIZE -->
   <settings pass="specialize">
 
+    <!-- IDIOMA / REGIÓN DEL SISTEMA FINAL -->
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>es-419</InputLocale>   <!-- Teclado Latinoamérica -->
+      <SystemLocale>es-ES</SystemLocale>  <!-- Sistema en Español España -->
+      <UILanguage>es-ES</UILanguage>      <!-- Interfaz Español España -->
+      <UserLocale>es-MX</UserLocale>      <!-- Formato región México -->
+    </component>
+
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -121,9 +131,9 @@
         <Interface wcm:action="add">
           <Identifier>Ethernet</Identifier>
 
-          <Ipv4Settings>
-            <DhcpEnabled>false</DhcpEnabled>
-          </Ipv4Settings>
+          <IPv4Settings>
+            <DHCPEnabled>false</DHCPEnabled>
+          </IPv4Settings>
 
           <UnicastIpAddresses>
             <IpAddress wcm:action="add" wcm:keyValue="1">{{ vm_cidr }}</IpAddress>
@@ -150,6 +160,18 @@
 
   <!-- PASO 3: OOBE -->
   <settings pass="oobeSystem">
+
+    <!-- REFORZAMOS IDIOMA/TECLADO PARA LA PRIMERA INICIO -->
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <InputLocale>es-419</InputLocale>
+      <SystemLocale>es-ES</SystemLocale>
+      <UILanguage>es-ES</UILanguage>
+      <UserLocale>es-MX</UserLocale>
+    </component>
 
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
