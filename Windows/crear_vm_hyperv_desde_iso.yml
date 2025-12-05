@@ -287,6 +287,23 @@
             } while ($vm.State -ne 'Off')
           }
 
+          # 7. Deshabilitar arranque de red PXE en el adaptador de red
+          $netAdapter = Get-VMNetworkAdapter -VMName $VmName
+          if ($netAdapter) {
+              Set-VMNetworkAdapter -VMNetworkAdapter $netAdapter -IovWeight 0 -MacAddressSpoofing Off -DynamicMacAddress `
+                  -StaticMacAddress $netAdapter.MacAddress -DefaultIsolationMode None | Out-Null
+                  
+              # Deshabilitar la opción de arranque sintético para UEFI
+              # Nota: esto puede afectar el rendimiento, pero es la forma más simple de evitar el PXE.
+              Get-VMFirmware -VMName $VmName | ForEach-Object {
+                  $_.BootOrder | Where-Object { $_ -is [Microsoft.HyperV.PowerShell.VMSyntheticNic] } | ForEach-Object {
+                      Remove-VMBootEntry -VMBootEntry $_ -Confirm:$false
+                  }
+              }
+              
+              Write-Host "Arranque PXE de red deshabilitado para el adaptador."
+          }
+          
           # 8. Quitar todos los DVD drives
           Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue |
             ForEach-Object {
