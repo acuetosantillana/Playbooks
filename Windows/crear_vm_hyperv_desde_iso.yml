@@ -15,6 +15,9 @@
       - SMXFCHVB
       - SMXHYPVA
 
+    #Contraseña de Administrador
+    admin_password: "Passw0rd."
+
     # vSwitch por defecto
     default_switch: 'LAN-Prod'
 
