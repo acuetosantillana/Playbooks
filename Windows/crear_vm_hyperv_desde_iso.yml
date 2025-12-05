@@ -163,8 +163,7 @@
 
           # Queremos que la RAÍZ de la ISO tenga directamente autounattend.xml
           # y que respete minúsculas/mayúsculas.
-          $args = @('-n','-m','-u2','-udfver102', $SourcePath, $IsoPath)
-
+          $args = @('-n','-m','-d', $SourcePath, $IsoPath)
 
           Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
 
@@ -326,6 +325,7 @@
             -BootOrder $desiredOrder `
             -EnableSecureBoot On `
             -SecureBootTemplate 'MicrosoftWindows'
+            -DisableStartupPrompt $true
 
           Write-Host "BootOrder DESPUÉS:"
           (Get-VMFirmware -VMName $VmName).BootOrder |
