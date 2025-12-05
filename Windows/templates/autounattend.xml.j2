@@ -3,10 +3,8 @@
           xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
-  <!-- PASO 1: WINDOWS PE -->
+  <!-- PASO 1: WINDOWS PE (sin idioma porque WinPE no tiene LP) -->
   <settings pass="windowsPE">
-
-    <!-- OJO: sin bloque de idiomas aquí para que WinPE no rompa el unattended -->
     <component name="Microsoft-Windows-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -15,7 +13,6 @@
 
       <ImageInstall>
         <OSImage>
-          <!-- USAR INDEX PARA EVITAR ERRORES -->
           <InstallFrom>
             <MetaData wcm:action="add">
               <Key>/IMAGE/INDEX</Key>
@@ -83,30 +80,29 @@
     </component>
   </settings>
 
-  <!-- PASO 2: SPECIALIZE -->
+
+  <!-- PASO 2: SPECIALIZE (sin Intl-Core) -->
   <settings pass="specialize">
 
-    <!-- IDIOMAS / REGIÓN DEL SISTEMA YA INSTALADO -->
-    <component name="Microsoft-Windows-International-Core"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-      <InputLocale>es-419</InputLocale>   <!-- Teclado Latinoamérica -->
-      <SystemLocale>es-ES</SystemLocale>  <!-- Sistema Español (España, internacional) -->
-      <UILanguage>es-ES</UILanguage>      <!-- Interfaz en español España -->
-      <UserLocale>es-MX</UserLocale>      <!-- Formato regional México -->
-    </component>
-
+    <!-- IDIOMA, REGIÓN Y TECLADO QUE SIEMPRE FUNCIONAN -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
+
       <ComputerName>{{ vm_name }}</ComputerName>
       <TimeZone>Central Standard Time (Mexico)</TimeZone>
+
+      <!-- Finalmente tu idioma deseado -->
+      <InputLocale>es-419</InputLocale>
+      <SystemLocale>es-ES</SystemLocale>
+      <UILanguage>es-ES</UILanguage>
+      <UserLocale>es-MX</UserLocale>
     </component>
 
+
+    <!-- RED CORREGIDA PARA SERVER 2022 -->
     <component name="Microsoft-Windows-TCPIP"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -117,24 +113,29 @@
         <Interface wcm:action="add">
           <Identifier>Ethernet</Identifier>
 
-          <Ipv4Settings>
-            <DhcpEnabled>false</DhcpEnabled>
-          </Ipv4Settings>
+          <IPv4Settings>
+            <DHCPEnabled>false</DHCPEnabled>
+            <RouterDiscoveryEnabled>false</RouterDiscoveryEnabled>
+          </IPv4Settings>
 
-          <UnicastIpAddresses>
-            <IpAddress wcm:action="add" wcm:keyValue="1">{{ vm_cidr }}</IpAddress>
-          </UnicastIpAddresses>
+          <UnicastAddresses>
+            <UnicastAddress wcm:action="add">
+              <Address>{{ vm_ip }}</Address>
+              <PrefixLength>{{ vm_prefix }}</PrefixLength>
+            </UnicastAddress>
+          </UnicastAddresses>
 
-          <Gateway>
-            <Route wcm:action="add" wcm:keyValue="0">
-              <Identifier>0</Identifier>
+          <Routes>
+            <Route wcm:action="add">
+              <Identifier>1</Identifier>
+              <Prefix>0.0.0.0/0</Prefix>
               <NextHop>{{ vm_gateway }}</NextHop>
             </Route>
-          </Gateway>
+          </Routes>
 
           <DnsServers>
-            <DnsServer wcm:action="add" wcm:keyValue="1">{{ vm_dns1 }}</DnsServer>
-            <DnsServer wcm:action="add" wcm:keyValue="2">{{ vm_dns2 }}</DnsServer>
+            <DnsServer wcm:action="add">{{ vm_dns1 }}</DnsServer>
+            <DnsServer wcm:action="add">{{ vm_dns2 }}</DnsServer>
           </DnsServers>
 
         </Interface>
@@ -144,26 +145,21 @@
 
   </settings>
 
+
   <!-- PASO 3: OOBE -->
   <settings pass="oobeSystem">
-
-    <!-- Refuerzo de idioma/teclado para el primer inicio -->
-    <component name="Microsoft-Windows-International-Core"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-      <InputLocale>es-419</InputLocale>
-      <SystemLocale>es-ES</SystemLocale>
-      <UILanguage>es-ES</UILanguage>
-      <UserLocale>es-MX</UserLocale>
-    </component>
 
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
+
+      <!-- Refuerzo de idioma final -->
+      <InputLocale>es-419</InputLocale>
+      <SystemLocale>es-ES</SystemLocale>
+      <UILanguage>es-ES</UILanguage>
+      <UserLocale>es-MX</UserLocale>
 
       <UserAccounts>
         <AdministratorPassword>
@@ -189,6 +185,7 @@
       </OOBE>
 
     </component>
+
   </settings>
 
 </unattend>
