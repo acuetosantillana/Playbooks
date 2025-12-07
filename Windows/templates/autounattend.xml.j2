@@ -8,7 +8,7 @@
   <!-- ======================== -->
   <settings pass="windowsPE">
 
-    <!-- Idioma del setup en WinPE -->
+    <!-- Idioma del setup en WinPE (es-ES porque tu ISO es es-es) -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -129,50 +129,7 @@
       <UserLocale>es-ES</UserLocale>
     </component>
 
-    <!-- Configuración de red estática -->
-    <component name="Microsoft-Windows-TCPIP"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-
-      <Interfaces>
-        <Interface wcm:action="add">
-          <Identifier>Ethernet</Identifier>
-
-          <IPv4Settings>
-            <DHCPEnabled>false</DHCPEnabled>
-            <RouterDiscoveryEnabled>false</RouterDiscoveryEnabled>
-          </IPv4Settings>
-
-          <!-- IP FIJA -->
-          <UnicastAddresses>
-            <UnicastAddress wcm:action="add">
-              <Address>{{ vm_ip }}</Address>
-              <PrefixLength>{{ vm_prefix }}</PrefixLength>
-            </UnicastAddress>
-          </UnicastAddresses>
-
-          <!-- Ruta default -->
-          <Routes>
-            <Route wcm:action="add">
-              <Identifier>1</Identifier>
-              <Prefix>0.0.0.0</Prefix>
-              <PrefixLength>0</PrefixLength>
-              <NextHop>{{ vm_gateway }}</NextHop>
-            </Route>
-          </Routes>
-
-          <!-- DNS -->
-          <DnsServers>
-            <DnsServer wcm:action="add">{{ vm_dns1 }}</DnsServer>
-            <DnsServer wcm:action="add">{{ vm_dns2 }}</DnsServer>
-          </DnsServers>
-
-        </Interface>
-      </Interfaces>
-    </component>
-
+    <!-- OJO: aquí ya NO hay componente Microsoft-Windows-TCPIP -->
   </settings>
 
   <!-- ======================== -->
