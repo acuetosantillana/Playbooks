@@ -54,7 +54,7 @@
           - memory_gb is defined
           - cpu is defined
           - disk_gb is defined
-          - vm_cidr is defined       # ej: 10.138.120.55/24 (aunque hoy no lo use el unattend, lo dejamos listo)
+          - vm_cidr is defined       # ej: 10.138.120.55/24
           - vm_gateway is defined
           - vm_dns1 is defined
           - admin_password is defined
@@ -80,8 +80,8 @@
         unattended_xml_path: "C:\\autounattend\\{{ vm_name }}\\autounattend.xml"
         unattended_iso_path: "C:\\ISOs\\{{ vm_name }}_autounattend.iso"
 
-    # Dejamos calculada la IP/prefijo por si luego los usas post-instalación
-    - name: Derivar vm_ip, vm_prefix y vm_dns2 (para uso futuro)
+    # Dejamos calculada la IP/prefijo por si luego la usas post-instalación
+    - name: Derivar vm_ip, vm_prefix y vm_dns2 (uso futuro)
       ansible.builtin.set_fact:
         vm_ip: "{{ vm_cidr.split('/')[0] }}"
         vm_prefix: "{{ vm_cidr.split('/')[1] | int }}"
@@ -319,7 +319,7 @@
                                         -ControllerLocation 1 `
                                         -Path $UnattendIsoPath
 
-          # 10. Configurar firmware: quitar PXE y dejar Disco primero, luego DVD
+          # 10. Configurar firmware: desactivar SecureBoot y arrancar desde DVD (sin PXE)
 
           $fw  = Get-VMFirmware -VMName $VmName
           $hdd = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
@@ -328,32 +328,18 @@
             throw "No se encontró disco duro para configurar el firmware."
           }
 
-          # 10.1 Eliminar TODAS las entradas de red (PXE) del BootOrder
-          $nicEntries = $fw.BootOrder | Where-Object {
-            $_.BootType -eq 'Network' -or $_.FirmwareDeviceName -like '*Network*'
-          }
-
-          foreach ($entry in $nicEntries) {
-            Write-Host "Eliminando entrada de arranque de red: $($entry.FirmwareDeviceName)"
-            Remove-VMBootEntry -VMBootEntry $entry -Confirm:$false
-          }
-
-          # 10.2 Definir orden de arranque: Disco primero, luego DVD
-          $desiredOrder = @()
-          if ($hdd)     { $desiredOrder += $hdd }
-          if ($dvdMain) { $desiredOrder += $dvdMain }
+          # Definir nuevo BootOrder: solo DVD de Windows y Disco
+          $newOrder = @($dvdMain, $hdd)
 
           Write-Host "BootOrder ANTES:"
-          (Get-VMFirmware -VMName $VmName).BootOrder |
+          $fw.BootOrder |
             ForEach-Object { " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))" } |
             Out-String | Write-Host
 
           Set-VMFirmware -VMName $VmName `
-            -FirstBootDevice $hdd `
-            -BootOrder $desiredOrder `
-            -EnableSecureBoot On `
-            -SecureBootTemplate 'MicrosoftWindows' `
-            -DisableStartupPrompt $true
+            -EnableSecureBoot Off `           # Secure Boot OFF para evitar fallos de arranque del ISO
+            -BootOrder $newOrder `
+            -FirstBootDevice $dvdMain
 
           Write-Host "BootOrder DESPUÉS:"
           (Get-VMFirmware -VMName $VmName).BootOrder |
