@@ -3,32 +3,34 @@
           xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
-  <!-- PASO 1: WINDOWS PE (sin idioma porque WinPE no tiene LP) -->
+  <!-- ======================== -->
+  <!--        WINDOWS PE        -->
+  <!-- ======================== -->
   <settings pass="windowsPE">
+
+    <!-- Idioma del setup en WinPE -->
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>es-MX</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>es-MX</InputLocale>
+      <SystemLocale>es-MX</SystemLocale>
+      <UILanguage>es-MX</UILanguage>
+      <UserLocale>es-MX</UserLocale>
+    </component>
+
+    <!-- Particionado UEFI + instalación -->
     <component name="Microsoft-Windows-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
 
-      <ImageInstall>
-        <OSImage>
-          <InstallFrom>
-            <MetaData wcm:action="add">
-              <Key>/IMAGE/INDEX</Key>
-              <Value>4</Value>
-            </MetaData>
-          </InstallFrom>
-
-          <InstallTo>
-            <DiskID>0</DiskID>
-            <PartitionID>3</PartitionID>
-          </InstallTo>
-
-          <WillShowUI>Never</WillShowUI>
-        </OSImage>
-      </ImageInstall>
-
+      <!-- DISCO 0 = EFI + MSR + C: -->
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
@@ -40,11 +42,13 @@
               <Type>EFI</Type>
               <Size>100</Size>
             </CreatePartition>
+
             <CreatePartition wcm:action="add">
               <Order>2</Order>
               <Type>MSR</Type>
               <Size>16</Size>
             </CreatePartition>
+
             <CreatePartition wcm:action="add">
               <Order>3</Order>
               <Type>Primary</Type>
@@ -53,24 +57,48 @@
           </CreatePartitions>
 
           <ModifyPartitions>
+            <!-- EFI -->
             <ModifyPartition wcm:action="add">
               <Order>1</Order>
               <PartitionID>1</PartitionID>
-              <Label>System</Label>
               <Format>FAT32</Format>
+              <Label>System</Label>
             </ModifyPartition>
+
+            <!-- C: -->
             <ModifyPartition wcm:action="add">
               <Order>2</Order>
               <PartitionID>3</PartitionID>
-              <Label>Windows</Label>
               <Format>NTFS</Format>
               <Letter>C</Letter>
+              <Label>Windows</Label>
             </ModifyPartition>
           </ModifyPartitions>
 
         </Disk>
+        <WillShowUI>OnError</WillShowUI>
       </DiskConfiguration>
 
+      <!-- Imagen WIM -->
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>{{ vm_image_index }}</Value>
+            </MetaData>
+          </InstallFrom>
+
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+      <!-- EULA -->
       <UserData>
         <AcceptEula>true</AcceptEula>
         <FullName>Admin</FullName>
@@ -80,11 +108,12 @@
     </component>
   </settings>
 
-
-  <!-- PASO 2: SPECIALIZE (sin Intl-Core) -->
+  <!-- ======================== -->
+  <!--       SPECIALIZE         -->
+  <!-- ======================== -->
   <settings pass="specialize">
 
-    <!-- IDIOMA, REGIÓN Y TECLADO QUE SIEMPRE FUNCIONAN -->
+    <!-- Nombre del equipo + idioma -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -94,15 +123,13 @@
       <ComputerName>{{ vm_name }}</ComputerName>
       <TimeZone>Central Standard Time (Mexico)</TimeZone>
 
-      <!-- Finalmente tu idioma deseado -->
-      <InputLocale>es-419</InputLocale>
-      <SystemLocale>es-ES</SystemLocale>
-      <UILanguage>es-ES</UILanguage>
+      <InputLocale>es-MX</InputLocale>
+      <SystemLocale>es-MX</SystemLocale>
+      <UILanguage>es-MX</UILanguage>
       <UserLocale>es-MX</UserLocale>
     </component>
 
-
-    <!-- RED CORREGIDA PARA SERVER 2022 -->
+    <!-- Configuración de red estática -->
     <component name="Microsoft-Windows-TCPIP"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -118,20 +145,25 @@
             <RouterDiscoveryEnabled>false</RouterDiscoveryEnabled>
           </IPv4Settings>
 
+          <!-- IP FIJA -->
           <UnicastAddresses>
             <UnicastAddress wcm:action="add">
-              <Address>{{ vm_cidr }}</Address> <!-- aquí iría algo tipo 10.138.120.101/24 -->
+              <Address>{{ vm_ip }}</Address>
+              <PrefixLength>{{ vm_prefix }}</PrefixLength>
             </UnicastAddress>
           </UnicastAddresses>
 
+          <!-- Ruta default -->
           <Routes>
             <Route wcm:action="add">
               <Identifier>1</Identifier>
-              <Prefix>0.0.0.0/0</Prefix>
+              <Prefix>0.0.0.0</Prefix>
+              <PrefixLength>0</PrefixLength>
               <NextHop>{{ vm_gateway }}</NextHop>
             </Route>
           </Routes>
 
+          <!-- DNS -->
           <DnsServers>
             <DnsServer wcm:action="add">{{ vm_dns1 }}</DnsServer>
             <DnsServer wcm:action="add">{{ vm_dns2 }}</DnsServer>
@@ -139,13 +171,13 @@
 
         </Interface>
       </Interfaces>
-
     </component>
 
   </settings>
 
-
-  <!-- PASO 3: OOBE -->
+  <!-- ======================== -->
+  <!--       OOBE SYSTEM        -->
+  <!-- ======================== -->
   <settings pass="oobeSystem">
 
     <component name="Microsoft-Windows-Shell-Setup"
@@ -154,33 +186,40 @@
                language="neutral"
                versionScope="nonSxS">
 
-      <!-- Refuerzo de idioma final -->
-      <InputLocale>es-419</InputLocale>
-      <SystemLocale>es-ES</SystemLocale>
-      <UILanguage>es-ES</UILanguage>
+      <!-- Idioma final -->
+      <InputLocale>es-MX</InputLocale>
+      <SystemLocale>es-MX</SystemLocale>
+      <UILanguage>es-MX</UILanguage>
       <UserLocale>es-MX</UserLocale>
 
+      <!-- Password administrador -->
       <UserAccounts>
         <AdministratorPassword>
-          <Value>Passw0rd.</Value>
+          <Value>{{ admin_password }}</Value>
           <PlainText>true</PlainText>
         </AdministratorPassword>
       </UserAccounts>
 
+      <!-- Autologon inicial -->
       <AutoLogon>
         <Password>
-          <Value>Passw0rd.</Value>
+          <Value>{{ admin_password }}</Value>
           <PlainText>true</PlainText>
         </Password>
         <Username>Administrator</Username>
         <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
       </AutoLogon>
 
+      <!-- Saltar OOBE -->
       <OOBE>
         <HideEULAPage>true</HideEULAPage>
         <HideLocalAccountScreen>true</HideLocalAccountScreen>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
         <SkipMachineOOBE>true</SkipMachineOOBE>
         <SkipUserOOBE>true</SkipUserOOBE>
+        <ProtectYourPC>1</ProtectYourPC>
       </OOBE>
 
     </component>
