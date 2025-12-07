@@ -3,30 +3,21 @@
           xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
-  <!-- ============================================================ -->
-  <!-- 1. WINDOWS PE (IDIOMA + IMAGEN, SIN DISKCONFIGURATION)      -->
-  <!-- ============================================================ -->
   <settings pass="windowsPE">
-
-    <!-- Idioma WinPE: ajustable después, pero ahora todo es-ES -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
-
       <SetupUILanguage>
         <UILanguage>es-ES</UILanguage>
       </SetupUILanguage>
-
       <InputLocale>es-ES</InputLocale>
       <SystemLocale>es-ES</SystemLocale>
       <UILanguage>es-ES</UILanguage>
       <UserLocale>es-ES</UserLocale>
     </component>
 
-    <!-- SOLO indicamos qué imagen instalar y a qué disco/partición,
-         dejamos que Windows haga el particionado por defecto -->
     <component name="Microsoft-Windows-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -42,12 +33,7 @@
             </MetaData>
           </InstallFrom>
 
-          <!-- Disco 0, que es el VHD nuevo -->
-          <InstallTo>
-            <DiskID>0</DiskID>
-            <PartitionID>1</PartitionID>
-          </InstallTo>
-
+          <!-- Particionado AUTOMÁTICO (sin InstallTo, sin DiskConfiguration) -->
           <WillShowUI>OnError</WillShowUI>
         </OSImage>
       </ImageInstall>
@@ -61,20 +47,17 @@
     </component>
   </settings>
 
-  <!-- ============================================================ -->
-  <!-- 2. SPECIALIZE (HOSTNAME + RED ESTÁTICA)                     -->
-  <!-- ============================================================ -->
   <settings pass="specialize">
-
+    <!-- Hostname -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
-      <!-- Nombre del servidor -->
       <ComputerName>{{ vm_name }}</ComputerName>
     </component>
 
+    <!-- Red estática -->
     <component name="Microsoft-Windows-TCPIP"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -107,15 +90,12 @@
             <DnsServer wcm:action="add">{{ vm_dns1 }}</DnsServer>
             <DnsServer wcm:action="add">{{ vm_dns2 }}</DnsServer>
           </DnsServers>
+
         </Interface>
       </Interfaces>
     </component>
-
   </settings>
 
-  <!-- ============================================================ -->
-  <!-- 3. OOBE SYSTEM (SOLO CONTRASEÑA DE ADMIN)                   -->
-  <!-- ============================================================ -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
