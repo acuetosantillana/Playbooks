@@ -8,6 +8,7 @@
   <!-- ======================== -->
   <settings pass="windowsPE">
 
+    <!-- Idioma de WinPE (ISO es-es) -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -24,6 +25,7 @@
       <UserLocale>es-ES</UserLocale>
     </component>
 
+    <!-- Particionado UEFI + instalación -->
     <component name="Microsoft-Windows-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -103,30 +105,13 @@
     </component>
   </settings>
 
-  <!-- ======================== -->
-  <!--         SPECIALIZE       -->
-  <!-- ======================== -->
-  <settings pass="specialize">
-
-    <component name="Microsoft-Windows-Shell-Setup"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-
-      <ComputerName>{{ vm_name }}</ComputerName>
-      <TimeZone>Central Standard Time (Mexico)</TimeZone>
-
-      <InputLocale>es-ES</InputLocale>
-      <SystemLocale>es-ES</SystemLocale>
-      <UILanguage>es-ES</UILanguage>
-      <UserLocale>es-ES</UserLocale>
-    </component>
-
-  </settings>
+  <!-- 🔴 IMPORTANTE:
+       No hay <settings pass="specialize">, lo quitamos por completo.
+       Así evitamos cualquier error en ese ciclo.
+  -->
 
   <!-- ======================== -->
-  <!--         OOBE SYSTEM      -->
+  <!--       OOBE SYSTEM        -->
   <!-- ======================== -->
   <settings pass="oobeSystem">
 
