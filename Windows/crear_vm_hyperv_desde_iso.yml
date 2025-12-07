@@ -7,7 +7,7 @@
     - ansible.windows
 
   vars:
-    # Hosts válidos
+    # Hosts válidos donde se permite crear VMs
     hyperv_hosts:
       - SMXHVCEDIS
       - SMXHVFCAWS19
@@ -26,7 +26,7 @@
       - 'D'
       - 'E'
 
-    # ISO por defecto en NAS (Windows 2022 eval)
+    # ISO por defecto en NAS (Windows Server eval es-es)
     iso_path_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
     # NAS para el SMB Global Mapping
@@ -38,8 +38,8 @@
     # Ruta local de oscdimg
     oscdimg_path: 'C:\\Oscdimg\\oscdimg.exe'
 
-    # Índice de la imagen dentro de install.wim
-    vm_image_index: 4   # ajusta según DISM /Get-WimInfo si hace falta
+    # Índice de la imagen dentro de install.wim (lo usa el autounattend)
+    vm_image_index: 4
 
   tasks:
 
@@ -54,7 +54,7 @@
           - memory_gb is defined
           - cpu is defined
           - disk_gb is defined
-          - vm_cidr is defined       # ej: 10.138.120.55/24
+          - vm_cidr is defined       # ej: 10.138.120.55/24 (aunque hoy no lo use el unattend, lo dejamos listo)
           - vm_gateway is defined
           - vm_dns1 is defined
           - admin_password is defined
@@ -80,8 +80,8 @@
         unattended_xml_path: "C:\\autounattend\\{{ vm_name }}\\autounattend.xml"
         unattended_iso_path: "C:\\ISOs\\{{ vm_name }}_autounattend.iso"
 
-    # vm_cidr -> vm_ip + vm_prefix y vm_dns2
-    - name: Derivar vm_ip, vm_prefix y vm_dns2
+    # Dejamos calculada la IP/prefijo por si luego los usas post-instalación
+    - name: Derivar vm_ip, vm_prefix y vm_dns2 (para uso futuro)
       ansible.builtin.set_fact:
         vm_ip: "{{ vm_cidr.split('/')[0] }}"
         vm_prefix: "{{ vm_cidr.split('/')[1] | int }}"
@@ -189,7 +189,7 @@
           OscdimgPath: "{{ oscdimg_path }}"
 
     # -------------------------------------------------------------------
-    # 4) Crear / ajustar VM, VHD, DVDs y firmware
+    # 4) Crear / ajustar VM, VHD, DVDs y firmware (sin PXE)
     # -------------------------------------------------------------------
     - name: Crear VM en Hyper-V con ISO en NAS + ISO unattended
       ansible.windows.win_powershell:
@@ -300,16 +300,7 @@
             } while ($vm.State -ne 'Off')
           }
 
-          # 8. Quitar boot por PXE (eliminar NIC del BootOrder)
-          $fw = Get-VMFirmware -VMName $VmName
-          $nicBootEntries = $fw.BootOrder | Where-Object {
-            $_.FirmwareDeviceName -like '*Network Adapter*'
-          }
-          foreach ($entry in $nicBootEntries) {
-            Remove-VMBootEntry -VMBootEntry $entry -Confirm:$false
-          }
-
-          # 9. Quitar todos los DVD drives
+          # 8. Quitar todos los DVD drives previos
           Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue |
             ForEach-Object {
               Remove-VMDvdDrive -VMName $VmName `
@@ -318,7 +309,7 @@
                                 -Confirm:$false
             }
 
-          # 10. Agregar DVD de Windows en SCSI 0:0 y unattended en 0:1
+          # 9. Agregar DVD de Windows en SCSI 0:0 y unattended en 0:1
           $dvdMain = Add-VMDvdDrive -VMName $VmName `
                                     -ControllerNumber 0 `
                                     -ControllerLocation 0 `
@@ -328,32 +319,48 @@
                                         -ControllerLocation 1 `
                                         -Path $UnattendIsoPath
 
-          # 11. Configurar firmware:
-          #     BootOrder = [DVD Windows, Disco]
+          # 10. Configurar firmware: quitar PXE y dejar Disco primero, luego DVD
+
           $fw  = Get-VMFirmware -VMName $VmName
           $hdd = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
 
+          if (-not $hdd) {
+            throw "No se encontró disco duro para configurar el firmware."
+          }
+
+          # 10.1 Eliminar TODAS las entradas de red (PXE) del BootOrder
+          $nicEntries = $fw.BootOrder | Where-Object {
+            $_.BootType -eq 'Network' -or $_.FirmwareDeviceName -like '*Network*'
+          }
+
+          foreach ($entry in $nicEntries) {
+            Write-Host "Eliminando entrada de arranque de red: $($entry.FirmwareDeviceName)"
+            Remove-VMBootEntry -VMBootEntry $entry -Confirm:$false
+          }
+
+          # 10.2 Definir orden de arranque: Disco primero, luego DVD
           $desiredOrder = @()
-          if ($dvdMain) { $desiredOrder += $dvdMain }
           if ($hdd)     { $desiredOrder += $hdd }
+          if ($dvdMain) { $desiredOrder += $dvdMain }
 
           Write-Host "BootOrder ANTES:"
-          $fw.BootOrder | ForEach-Object {
-            " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
-          } | Out-String | Write-Host
+          (Get-VMFirmware -VMName $VmName).BootOrder |
+            ForEach-Object { " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))" } |
+            Out-String | Write-Host
 
           Set-VMFirmware -VMName $VmName `
-            -FirstBootDevice $dvdMain `
+            -FirstBootDevice $hdd `
             -BootOrder $desiredOrder `
             -EnableSecureBoot On `
-            -SecureBootTemplate 'MicrosoftWindows'
+            -SecureBootTemplate 'MicrosoftWindows' `
+            -DisableStartupPrompt $true
 
           Write-Host "BootOrder DESPUÉS:"
-          (Get-VMFirmware -VMName $VmName).BootOrder | ForEach-Object {
-            " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
-          } | Out-String | Write-Host
+          (Get-VMFirmware -VMName $VmName).BootOrder |
+            ForEach-Object { " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))" } |
+            Out-String | Write-Host
 
-          # 12. Iniciar VM
+          # 11. Iniciar VM
           $vm = Get-VM -Name $VmName
           if ($vm.State -ne 'Running') {
             Start-VM -Name $VmName | Out-Null
