@@ -7,7 +7,7 @@
     - ansible.windows
 
   vars:
-    # Hosts válidos donde se permite crear VMs
+    # Hosts válidos
     hyperv_hosts:
       - SMXHVCEDIS
       - SMXHVFCAWS19
@@ -15,7 +15,7 @@
       - SMXFCHVB
       - SMXHYPVA
 
-    # Contraseña de Administrador local (se usa en autounattend)
+    # Password Administrador local (lo usa autounattend)
     admin_password: "Passw0rd."
 
     # vSwitch por defecto
@@ -29,7 +29,7 @@
     # ISO por defecto en NAS (Windows Server eval es-es)
     iso_path_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
-    # NAS para el SMB Global Mapping
+    # NAS para SMB Global Mapping
     nas_server: '10.138.120.130'
     nas_share: 'isos'
     nas_user: 'NASUSER_AQUI'
@@ -38,7 +38,7 @@
     # Ruta local de oscdimg
     oscdimg_path: 'C:\\Oscdimg\\oscdimg.exe'
 
-    # Índice de la imagen dentro de install.wim (lo usa el autounattend)
+    # Índice de imagen dentro de install.wim (lo usa autounattend)
     vm_image_index: 4
 
   tasks:
@@ -54,7 +54,7 @@
           - memory_gb is defined
           - cpu is defined
           - disk_gb is defined
-          - vm_cidr is defined       # ej: 10.138.120.55/24
+          - vm_cidr is defined
           - vm_gateway is defined
           - vm_dns1 is defined
           - admin_password is defined
@@ -75,13 +75,11 @@
         memory_bytes: "{{ (memory_gb | int) * 1073741824 }}"
         disk_bytes: "{{ (disk_gb | int) * 1073741824 }}"
         cpu_count: "{{ cpu | int }}"
-
         unattended_xml_dir: "C:\\autounattend\\{{ vm_name }}"
         unattended_xml_path: "C:\\autounattend\\{{ vm_name }}\\autounattend.xml"
         unattended_iso_path: "C:\\ISOs\\{{ vm_name }}_autounattend.iso"
 
-    # Dejamos calculada la IP/prefijo por si luego la usas post-instalación
-    - name: Derivar vm_ip, vm_prefix y vm_dns2 (uso futuro)
+    - name: Derivar vm_ip, vm_prefix y vm_dns2 (para uso futuro)
       ansible.builtin.set_fact:
         vm_ip: "{{ vm_cidr.split('/')[0] }}"
         vm_prefix: "{{ vm_cidr.split('/')[1] | int }}"
@@ -171,7 +169,7 @@
             Remove-Item -Path $IsoPath -Force
           }
 
-          # Queremos que la RAÍZ de la ISO tenga directamente autounattend.xml
+          # RAÍZ de la ISO = autounattend.xml
           $args = @('-n','-m','-d', $SourcePath, $IsoPath)
 
           Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
@@ -189,7 +187,7 @@
           OscdimgPath: "{{ oscdimg_path }}"
 
     # -------------------------------------------------------------------
-    # 4) Crear / ajustar VM, VHD, DVDs y firmware (sin PXE)
+    # 4) Crear / ajustar VM, VHD, DVDs y firmware
     # -------------------------------------------------------------------
     - name: Crear VM en Hyper-V con ISO en NAS + ISO unattended
       ansible.windows.win_powershell:
@@ -247,7 +245,7 @@
             Write-Host "VHD ya existía: $VhdPath"
           }
 
-          # 4. Crear VM SIN VHD (NoVHD) para controlar puertos
+          # 4. Crear VM SIN VHD (NoVHD)
           $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
           if (-not $vm) {
             New-VM -Name $VmName `
@@ -319,29 +317,19 @@
                                         -ControllerLocation 1 `
                                         -Path $UnattendIsoPath
 
-          # 10. Configurar firmware: desactivar SecureBoot y arrancar desde DVD (sin PXE)
-
-          $fw  = Get-VMFirmware -VMName $VmName
+          # 10. Firmware: en tu Hyper-V SOLO usamos BootOrder (no FirstBootDevice)
           $hdd = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
 
           if (-not $hdd) {
             throw "No se encontró disco duro para configurar el firmware."
           }
 
-          # Definir nuevo BootOrder: solo DVD de Windows y Disco
-          $newOrder = @($dvdMain, $hdd)
-
-          Write-Host "BootOrder ANTES:"
-          $fw.BootOrder |
-            ForEach-Object { " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))" } |
-            Out-String | Write-Host
-
+          # BootOrder = [DVD principal, Disco]. SecureBoot siempre OFF para ISO eval.
           Set-VMFirmware -VMName $VmName `
-            -EnableSecureBoot Off `           # Secure Boot OFF para evitar fallos de arranque del ISO
-            -BootOrder $newOrder `
-            -FirstBootDevice $dvdMain
+            -EnableSecureBoot Off `
+            -BootOrder $dvdMain, $hdd
 
-          Write-Host "BootOrder DESPUÉS:"
+          Write-Host "BootOrder configurado:"
           (Get-VMFirmware -VMName $VmName).BootOrder |
             ForEach-Object { " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))" } |
             Out-String | Write-Host
