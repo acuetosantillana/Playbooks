@@ -151,11 +151,17 @@
           <Order>1</Order>
           <Description>Configurar IP estática</Description>
           <CommandLine>
-            powershell.exe -ExecutionPolicy Bypass -Command "New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_prefix }} -DefaultGateway '{{ vm_gateway }}'; Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}'"
+            powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "
+              $iface = Get-NetAdapter | Where-Object { \$_.Status -eq 'Up' } | Sort-Object ifIndex | Select-Object -First 1;
+              if (\$iface) {
+                \$alias = \$iface.InterfaceAlias;
+                New-NetIPAddress -InterfaceAlias \$alias -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_prefix }} -DefaultGateway '{{ vm_gateway }}' -ErrorAction SilentlyContinue;
+                Set-DnsClientServerAddress -InterfaceAlias \$alias -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}' -ErrorAction SilentlyContinue;
+              }
+            "
           </CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
-
     </component>
   </settings>
 
