@@ -4,11 +4,11 @@
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <!-- ============================================================ -->
-  <!-- 1. WINDOWS PE (IDIOMA + DISCO + IMAGEN)                     -->
+  <!-- 1. WINDOWS PE: idioma + disco + selección de imagen          -->
   <!-- ============================================================ -->
   <settings pass="windowsPE">
 
-    <!-- Idioma WinPE: todo es-ES para tu ISO -->
+    <!-- Idioma básico para WinPE (ajustable más adelante) -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -23,14 +23,13 @@
       <InputLocale>es-ES</InputLocale>
     </component>
 
-    <!-- Particionado UEFI + selección de imagen -->
+    <!-- Particionado UEFI del disco 0 + selección de índice -->
     <component name="Microsoft-Windows-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
 
-      <!-- PARTICIONADO UEFI CORRECTO EN DISCO 0 -->
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
@@ -76,7 +75,6 @@
         </Disk>
       </DiskConfiguration>
 
-      <!-- INSTALAR EN PARTICIÓN 3 DEL DISCO 0 -->
       <ImageInstall>
         <OSImage>
           <InstallTo>
@@ -104,62 +102,22 @@
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 2. SPECIALIZE (HOSTNAME + IP ESTÁTICA)                      -->
+  <!-- 2. SPECIALIZE: SOLO hostname (nada de red aquí)              -->
   <!-- ============================================================ -->
   <settings pass="specialize">
-
-    <!-- Hostname -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
+
       <ComputerName>{{ vm_name }}</ComputerName>
-    </component>
-
-    <!-- Red IPv4 estática -->
-    <component name="Microsoft-Windows-TCPIP"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-
-      <Interfaces>
-        <Interface wcm:action="add">
-          <!-- Nombre lógico de la NIC en Windows -->
-          <Identifier>Ethernet</Identifier>
-
-          <IPv4Settings>
-            <DHCPEnabled>false</DHCPEnabled>
-          </IPv4Settings>
-
-          <UnicastAddresses>
-            <UnicastAddress wcm:action="add">
-              <!-- IP/CIDR: ej. 10.138.120.55/24 -->
-              <Address>{{ vm_ip }}/{{ vm_prefix }}</Address>
-            </UnicastAddress>
-          </UnicastAddresses>
-
-          <Routes>
-            <Route wcm:action="add">
-              <Identifier>0</Identifier>
-              <Prefix>0.0.0.0/0</Prefix>
-              <NextHop>{{ vm_gateway }}</NextHop>
-            </Route>
-          </Routes>
-
-          <DnsServers>
-            <DnsServer wcm:action="add">{{ vm_dns1 }}</DnsServer>
-            <DnsServer wcm:action="add">{{ vm_dns2 }}</DnsServer>
-          </DnsServers>
-        </Interface>
-      </Interfaces>
 
     </component>
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 3. OOBE SYSTEM (CONTRASEÑA DE ADMIN)                        -->
+  <!-- 3. OOBE SYSTEM: contraseña + autologon + set-IP en primer logon -->
   <!-- ============================================================ -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup"
@@ -168,12 +126,35 @@
                language="neutral"
                versionScope="nonSxS">
 
+      <!-- Contraseña de Administrator -->
       <UserAccounts>
         <AdministratorPassword>
           <Value>{{ admin_password }}</Value>
           <PlainText>true</PlainText>
         </AdministratorPassword>
       </UserAccounts>
+
+      <!-- Autologon UNA sola vez -->
+      <AutoLogon>
+        <Username>Administrator</Username>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Password>
+          <Value>{{ admin_password }}</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+
+      <!-- Primer inicio de sesión: configurar IP estática vía PowerShell -->
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Configurar IP estática</Description>
+          <CommandLine>
+            powershell.exe -ExecutionPolicy Bypass -Command "New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_prefix }} -DefaultGateway '{{ vm_gateway }}'; Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}'"
+          </CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
 
     </component>
   </settings>
