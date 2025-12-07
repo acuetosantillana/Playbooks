@@ -8,7 +8,7 @@
   <!-- ============================================================ -->
   <settings pass="windowsPE">
 
-    <!-- Idiomas: puedes ajustar más adelante si cambias de ISO -->
+    <!-- Idioma WinPE: todo es-ES para que coincida con tu ISO -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -105,19 +105,59 @@
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 2. SPECIALIZE (SOLO HOSTNAME, SIMPLE Y SEGURO)              -->
+  <!-- 2. SPECIALIZE (HOSTNAME + RED ESTÁTICA SIMPLE)              -->
   <!-- ============================================================ -->
   <settings pass="specialize">
+
+    <!-- Solo hostname, sin tocar idiomas aquí -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
-
-      <!-- Nombre del servidor -->
       <ComputerName>{{ vm_name }}</ComputerName>
-
     </component>
+
+    <!-- Red estática -->
+    <component name="Microsoft-Windows-TCPIP"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <Interfaces>
+        <Interface wcm:action="add">
+          <!-- Nombre lógico, suele ser "Ethernet" en Windows Server -->
+          <Identifier>Ethernet</Identifier>
+
+          <IPv4Settings>
+            <DHCPEnabled>false</DHCPEnabled>
+          </IPv4Settings>
+
+          <UnicastAddresses>
+            <UnicastAddress wcm:action="add">
+              <!-- vm_ip y vm_prefix los calculas en el playbook -->
+              <Address>{{ vm_ip }}/{{ vm_prefix }}</Address>
+            </UnicastAddress>
+          </UnicastAddresses>
+
+          <Routes>
+            <Route wcm:action="add">
+              <Identifier>0</Identifier>
+              <Prefix>0.0.0.0/0</Prefix>
+              <NextHop>{{ vm_gateway }}</NextHop>
+            </Route>
+          </Routes>
+
+          <DnsServers>
+            <DnsServer wcm:action="add">{{ vm_dns1 }}</DnsServer>
+            <DnsServer wcm:action="add">{{ vm_dns2 }}</DnsServer>
+          </DnsServers>
+
+        </Interface>
+      </Interfaces>
+    </component>
+
   </settings>
 
   <!-- ============================================================ -->
