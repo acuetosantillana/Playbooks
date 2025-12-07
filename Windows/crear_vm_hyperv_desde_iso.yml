@@ -15,7 +15,7 @@
       - SMXFCHVB
       - SMXHYPVA
 
-    #Contraseña de Administrador
+    # Contraseña de Administrador local (se usa en autounattend)
     admin_password: "Passw0rd."
 
     # vSwitch por defecto
@@ -37,6 +37,9 @@
 
     # Ruta local de oscdimg
     oscdimg_path: 'C:\\Oscdimg\\oscdimg.exe'
+
+    # Índice de la imagen dentro de install.wim
+    vm_image_index: 4   # ajusta según DISM /Get-WimInfo si hace falta
 
   tasks:
 
@@ -76,6 +79,13 @@
         unattended_xml_dir: "C:\\autounattend\\{{ vm_name }}"
         unattended_xml_path: "C:\\autounattend\\{{ vm_name }}\\autounattend.xml"
         unattended_iso_path: "C:\\ISOs\\{{ vm_name }}_autounattend.iso"
+
+    # vm_cidr -> vm_ip + vm_prefix y vm_dns2
+    - name: Derivar vm_ip, vm_prefix y vm_dns2
+      ansible.builtin.set_fact:
+        vm_ip: "{{ vm_cidr.split('/')[0] }}"
+        vm_prefix: "{{ vm_cidr.split('/')[1] | int }}"
+        vm_dns2: "{{ vm_dns2 | default(vm_dns1) }}"
 
     # -------------------------------------------------------------------
     # 1) SMB Global Mapping hacia la NAS
@@ -162,7 +172,6 @@
           }
 
           # Queremos que la RAÍZ de la ISO tenga directamente autounattend.xml
-          # y que respete minúsculas/mayúsculas.
           $args = @('-n','-m','-d', $SourcePath, $IsoPath)
 
           Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
@@ -208,8 +217,8 @@
           $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
           Write-Host "Usando unidad $($bestDrive.Name): $([math]::Round($bestDrive.Free/1GB,2)) GB libres"
 
-          $root        = $bestDrive.Root
-          $clusterRoot = "$root\$VmName"
+          $root          = $bestDrive.Root
+          $clusterRoot   = "$root\$VmName"
           $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
           $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"
 
@@ -223,8 +232,12 @@
           $VhdPath = Join-Path $vhdRoot "$VmName.vhdx"
 
           # 2. Validar ISOs
-          if (-not (Test-Path $IsoPath))       { throw "No se puede acceder a la ISO de Windows: $IsoPath" }
-          if (-not (Test-Path $UnattendIsoPath)) { throw "No se puede acceder a la ISO unattended: $UnattendIsoPath" }
+          if (-not (Test-Path $IsoPath)) {
+            throw "No se puede acceder a la ISO de Windows: $IsoPath"
+          }
+          if (-not (Test-Path $UnattendIsoPath)) {
+            throw "No se puede acceder a la ISO unattended: $UnattendIsoPath"
+          }
 
           # 3. Crear VHDX si no existe
           if (-not (Test-Path $VhdPath)) {
@@ -287,24 +300,16 @@
             } while ($vm.State -ne 'Off')
           }
 
-          # 7. Deshabilitar arranque de red PXE en el adaptador de red
-          $netAdapter = Get-VMNetworkAdapter -VMName $VmName
-          if ($netAdapter) {
-              Set-VMNetworkAdapter -VMNetworkAdapter $netAdapter -IovWeight 0 -MacAddressSpoofing Off -DynamicMacAddress `
-                  -StaticMacAddress $netAdapter.MacAddress -DefaultIsolationMode None | Out-Null
-                  
-              # Deshabilitar la opción de arranque sintético para UEFI
-              # Nota: esto puede afectar el rendimiento, pero es la forma más simple de evitar el PXE.
-              Get-VMFirmware -VMName $VmName | ForEach-Object {
-                  $_.BootOrder | Where-Object { $_ -is [Microsoft.HyperV.PowerShell.VMSyntheticNic] } | ForEach-Object {
-                      Remove-VMBootEntry -VMBootEntry $_ -Confirm:$false
-                  }
-              }
-              
-              Write-Host "Arranque PXE de red deshabilitado para el adaptador."
+          # 8. Quitar boot por PXE (eliminar NIC del BootOrder)
+          $fw = Get-VMFirmware -VMName $VmName
+          $nicBootEntries = $fw.BootOrder | Where-Object {
+            $_.FirmwareDeviceName -like '*Network Adapter*'
           }
-          
-          # 8. Quitar todos los DVD drives
+          foreach ($entry in $nicBootEntries) {
+            Remove-VMBootEntry -VMBootEntry $entry -Confirm:$false
+          }
+
+          # 9. Quitar todos los DVD drives
           Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue |
             ForEach-Object {
               Remove-VMDvdDrive -VMName $VmName `
@@ -313,7 +318,7 @@
                                 -Confirm:$false
             }
 
-          # 9. Agregar DVD de Windows en SCSI 0:0 y unattended en 0:1
+          # 10. Agregar DVD de Windows en SCSI 0:0 y unattended en 0:1
           $dvdMain = Add-VMDvdDrive -VMName $VmName `
                                     -ControllerNumber 0 `
                                     -ControllerLocation 0 `
@@ -323,7 +328,7 @@
                                         -ControllerLocation 1 `
                                         -Path $UnattendIsoPath
 
-          # 10. Configurar firmware sin PXE:
+          # 11. Configurar firmware:
           #     BootOrder = [DVD Windows, Disco]
           $fw  = Get-VMFirmware -VMName $VmName
           $hdd = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
@@ -342,15 +347,13 @@
             -BootOrder $desiredOrder `
             -EnableSecureBoot On `
             -SecureBootTemplate 'MicrosoftWindows'
-            -DisableStartupPrompt $true
 
           Write-Host "BootOrder DESPUÉS:"
-          (Get-VMFirmware -VMName $VmName).BootOrder |
-            ForEach-Object {
-              " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
-            } | Out-String | Write-Host
+          (Get-VMFirmware -VMName $VmName).BootOrder | ForEach-Object {
+            " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
+          } | Out-String | Write-Host
 
-          # 11. Iniciar VM
+          # 12. Iniciar VM
           $vm = Get-VM -Name $VmName
           if ($vm.State -ne 'Running') {
             Start-VM -Name $VmName | Out-Null
