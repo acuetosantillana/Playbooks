@@ -35,18 +35,21 @@
           <WillWipeDisk>true</WillWipeDisk>
 
           <CreatePartitions>
+            <!-- EFI -->
             <CreatePartition wcm:action="add">
               <Order>1</Order>
               <Type>EFI</Type>
               <Size>100</Size>
             </CreatePartition>
 
+            <!-- MSR -->
             <CreatePartition wcm:action="add">
               <Order>2</Order>
               <Type>MSR</Type>
               <Size>16</Size>
             </CreatePartition>
 
+            <!-- Primary (C:) -->
             <CreatePartition wcm:action="add">
               <Order>3</Order>
               <Type>Primary</Type>
@@ -55,6 +58,7 @@
           </CreatePartitions>
 
           <ModifyPartitions>
+            <!-- EFI FAT32 -->
             <ModifyPartition wcm:action="add">
               <PartitionID>1</PartitionID>
               <Order>1</Order>
@@ -62,6 +66,7 @@
               <Format>FAT32</Format>
             </ModifyPartition>
 
+            <!-- C: NTFS -->
             <ModifyPartition wcm:action="add">
               <PartitionID>3</PartitionID>
               <Order>2</Order>
@@ -76,11 +81,13 @@
 
       <ImageInstall>
         <OSImage>
+          <!-- Instalar en disco 0, partición 3 -->
           <InstallTo>
             <DiskID>0</DiskID>
             <PartitionID>3</PartitionID>
           </InstallTo>
 
+          <!-- Índice del install.wim -->
           <InstallFrom>
             <MetaData wcm:action="add">
               <Key>/IMAGE/INDEX</Key>
@@ -117,7 +124,7 @@
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 3. OOBE SYSTEM: contraseña + autologon + IP en Ethernet      -->
+  <!-- 3. OOBE SYSTEM: contraseña + autologon + IP estática         -->
   <!-- ============================================================ -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup"
@@ -145,13 +152,27 @@
         </Password>
       </AutoLogon>
 
-      <!-- Primer inicio: configurar IP fija sobre la NIC 'Ethernet' -->
+      <!-- Primer inicio: esperar NIC y configurar IP estática -->
       <FirstLogonCommands>
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
           <Description>Configurar IP estática en Ethernet</Description>
           <CommandLine>
-            powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_prefix }} -DefaultGateway '{{ vm_gateway }}' -ErrorAction SilentlyContinue; Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}' -ErrorAction SilentlyContinue"
+            powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "
+              Start-Sleep -Seconds 8;
+              $ErrorActionPreference = 'SilentlyContinue';
+              $i = 0;
+              while ($i -lt 5) {
+                $nic = Get-NetAdapter -Name 'Ethernet' -ErrorAction SilentlyContinue;
+                if ($nic -and $nic.Status -eq 'Up') {
+                  New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_prefix }} -DefaultGateway '{{ vm_gateway }}';
+                  Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}';
+                  break;
+                }
+                Start-Sleep -Seconds 3;
+                $i++;
+              }
+            "
           </CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
