@@ -8,7 +8,6 @@
   <!-- ============================================================ -->
   <settings pass="windowsPE">
 
-    <!-- Idioma básico para WinPE (ajustable más adelante) -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -23,13 +22,13 @@
       <InputLocale>es-ES</InputLocale>
     </component>
 
-    <!-- Particionado UEFI del disco 0 + selección de índice -->
     <component name="Microsoft-Windows-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
 
+      <!-- Particionado UEFI en disco 0 -->
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
@@ -96,13 +95,14 @@
       <UserData>
         <AcceptEula>true</AcceptEula>
         <FullName>Administrador</FullName>
+        <Organization>Empresa</Organization>
       </UserData>
 
     </component>
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 2. SPECIALIZE: SOLO hostname (nada de red aquí)              -->
+  <!-- 2. SPECIALIZE: solo hostname                                -->
   <!-- ============================================================ -->
   <settings pass="specialize">
     <component name="Microsoft-Windows-Shell-Setup"
@@ -117,7 +117,7 @@
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 3. OOBE SYSTEM: contraseña + autologon + set-IP en primer logon -->
+  <!-- 3. OOBE SYSTEM: contraseña + autologon + IP en Ethernet      -->
   <!-- ============================================================ -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup"
@@ -126,7 +126,7 @@
                language="neutral"
                versionScope="nonSxS">
 
-      <!-- Contraseña de Administrator -->
+      <!-- Password de Administrator -->
       <UserAccounts>
         <AdministratorPassword>
           <Value>{{ admin_password }}</Value>
@@ -134,7 +134,7 @@
         </AdministratorPassword>
       </UserAccounts>
 
-      <!-- Autologon UNA sola vez -->
+      <!-- Autologon una sola vez -->
       <AutoLogon>
         <Username>Administrator</Username>
         <Enabled>true</Enabled>
@@ -145,23 +145,17 @@
         </Password>
       </AutoLogon>
 
-      <!-- Primer inicio de sesión: configurar IP estática vía PowerShell -->
+      <!-- Primer inicio: configurar IP fija sobre la NIC 'Ethernet' -->
       <FirstLogonCommands>
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <Description>Configurar IP estática</Description>
+          <Description>Configurar IP estática en Ethernet</Description>
           <CommandLine>
-            powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "
-              $iface = Get-NetAdapter | Where-Object { \$_.Status -eq 'Up' } | Sort-Object ifIndex | Select-Object -First 1;
-              if (\$iface) {
-                \$alias = \$iface.InterfaceAlias;
-                New-NetIPAddress -InterfaceAlias \$alias -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_prefix }} -DefaultGateway '{{ vm_gateway }}' -ErrorAction SilentlyContinue;
-                Set-DnsClientServerAddress -InterfaceAlias \$alias -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}' -ErrorAction SilentlyContinue;
-              }
-            "
+            powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_prefix }} -DefaultGateway '{{ vm_gateway }}' -ErrorAction SilentlyContinue; Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}' -ErrorAction SilentlyContinue"
           </CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
+
     </component>
   </settings>
 
