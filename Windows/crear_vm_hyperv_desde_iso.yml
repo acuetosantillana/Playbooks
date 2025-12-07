@@ -317,22 +317,48 @@
                                         -ControllerLocation 1 `
                                         -Path $UnattendIsoPath
 
-          # 10. Firmware: en tu Hyper-V SOLO usamos BootOrder (no FirstBootDevice)
-          $hdd = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
+          # 10. Reordenar BootOrder usando las entradas existentes (compatible con tu Hyper-V)
+          $fw        = Get-VMFirmware -VMName $VmName
+          $bootOrder = $fw.BootOrder
 
-          if (-not $hdd) {
-            throw "No se encontró disco duro para configurar el firmware."
+          Write-Host "BootOrder ORIGINAL:"
+          $bootOrder | ForEach-Object {
+            " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
+          } | Out-String | Write-Host
+
+          # Clasificar entradas según tipo/nombre
+          $dvdEntries = $bootOrder | Where-Object {
+            $_.FirmwareDeviceName -like "*DVD*" -or $_.FirmwareDeviceName -like "*CD*"
           }
 
-          # BootOrder = [DVD principal, Disco]. SecureBoot siempre OFF para ISO eval.
+          $driveEntries = $bootOrder | Where-Object {
+            $_.BootType -eq "Drive" -and ($dvdEntries -notcontains $_)
+          }
+
+          $fileEntries = $bootOrder | Where-Object {
+            $_.BootType -eq "File"
+          }
+
+          $networkEntries = $bootOrder | Where-Object {
+            $_.BootType -eq "Network"
+          }
+
+          # Nuevo orden: DVD(s) -> Drive(s) -> File -> Network
+          $desiredOrder = @()
+          $desiredOrder += $dvdEntries
+          $desiredOrder += $driveEntries
+          $desiredOrder += $fileEntries
+          $desiredOrder += $networkEntries
+
           Set-VMFirmware -VMName $VmName `
             -EnableSecureBoot Off `
-            -BootOrder $dvdMain, $hdd
+            -BootOrder $desiredOrder
 
-          Write-Host "BootOrder configurado:"
+          Write-Host "BootOrder NUEVO:"
           (Get-VMFirmware -VMName $VmName).BootOrder |
-            ForEach-Object { " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))" } |
-            Out-String | Write-Host
+            ForEach-Object {
+              " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
+            } | Out-String | Write-Host
 
           # 11. Iniciar VM
           $vm = Get-VM -Name $VmName
