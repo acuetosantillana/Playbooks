@@ -4,11 +4,11 @@
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <!-- ============================================================ -->
-  <!-- 1. WINDOWS PE (IDIOMA + PARTICIONES + IMAGEN)               -->
+  <!-- 1. WINDOWS PE (IDIOMA + IMAGEN, SIN DISKCONFIGURATION)      -->
   <!-- ============================================================ -->
   <settings pass="windowsPE">
 
-    <!-- Idioma WinPE: todo es-ES para que coincida con tu ISO -->
+    <!-- Idioma WinPE: ajustable después, pero ahora todo es-ES -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -25,57 +25,13 @@
       <UserLocale>es-ES</UserLocale>
     </component>
 
-    <!-- Particionado UEFI + instalación -->
+    <!-- SOLO indicamos qué imagen instalar y a qué disco/partición,
+         dejamos que Windows haga el particionado por defecto -->
     <component name="Microsoft-Windows-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
-
-      <DiskConfiguration>
-        <Disk wcm:action="add">
-          <DiskID>0</DiskID>
-          <WillWipeDisk>true</WillWipeDisk>
-
-          <CreatePartitions>
-            <CreatePartition wcm:action="add">
-              <Order>1</Order>
-              <Type>EFI</Type>
-              <Size>100</Size>
-            </CreatePartition>
-
-            <CreatePartition wcm:action="add">
-              <Order>2</Order>
-              <Type>MSR</Type>
-              <Size>16</Size>
-            </CreatePartition>
-
-            <CreatePartition wcm:action="add">
-              <Order>3</Order>
-              <Type>Primary</Type>
-              <Extend>true</Extend>
-            </CreatePartition>
-          </CreatePartitions>
-
-          <ModifyPartitions>
-            <ModifyPartition wcm:action="add">
-              <Order>1</Order>
-              <PartitionID>1</PartitionID>
-              <Label>System</Label>
-              <Format>FAT32</Format>
-            </ModifyPartition>
-
-            <ModifyPartition wcm:action="add">
-              <Order>3</Order>
-              <PartitionID>3</PartitionID>
-              <Label>Windows</Label>
-              <Format>NTFS</Format>
-              <Letter>C</Letter>
-            </ModifyPartition>
-          </ModifyPartitions>
-
-        </Disk>
-      </DiskConfiguration>
 
       <ImageInstall>
         <OSImage>
@@ -86,9 +42,10 @@
             </MetaData>
           </InstallFrom>
 
+          <!-- Disco 0, que es el VHD nuevo -->
           <InstallTo>
             <DiskID>0</DiskID>
-            <PartitionID>3</PartitionID>
+            <PartitionID>1</PartitionID>
           </InstallTo>
 
           <WillShowUI>OnError</WillShowUI>
@@ -105,20 +62,19 @@
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 2. SPECIALIZE (HOSTNAME + RED ESTÁTICA SIMPLE)              -->
+  <!-- 2. SPECIALIZE (HOSTNAME + RED ESTÁTICA)                     -->
   <!-- ============================================================ -->
   <settings pass="specialize">
 
-    <!-- Solo hostname, sin tocar idiomas aquí -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
+      <!-- Nombre del servidor -->
       <ComputerName>{{ vm_name }}</ComputerName>
     </component>
 
-    <!-- Red estática -->
     <component name="Microsoft-Windows-TCPIP"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -127,7 +83,6 @@
 
       <Interfaces>
         <Interface wcm:action="add">
-          <!-- Nombre lógico, suele ser "Ethernet" en Windows Server -->
           <Identifier>Ethernet</Identifier>
 
           <IPv4Settings>
@@ -136,7 +91,6 @@
 
           <UnicastAddresses>
             <UnicastAddress wcm:action="add">
-              <!-- vm_ip y vm_prefix los calculas en el playbook -->
               <Address>{{ vm_ip }}/{{ vm_prefix }}</Address>
             </UnicastAddress>
           </UnicastAddresses>
@@ -153,7 +107,6 @@
             <DnsServer wcm:action="add">{{ vm_dns1 }}</DnsServer>
             <DnsServer wcm:action="add">{{ vm_dns2 }}</DnsServer>
           </DnsServers>
-
         </Interface>
       </Interfaces>
     </component>
