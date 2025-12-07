@@ -109,22 +109,81 @@
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 2. SPECIALIZE: solo hostname                                -->
+  <!-- 2. SPECIALIZE: hostname + IP estática + DNS                  -->
   <!-- ============================================================ -->
   <settings pass="specialize">
+
+    <!-- Nombre del servidor -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
-
       <ComputerName>{{ vm_name }}</ComputerName>
+    </component>
+
+    <!-- TCP/IP: IP fija + ruta por defecto en interfaz 'Ethernet' -->
+    <component name="Microsoft-Windows-TCPIP"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <Interfaces>
+        <Interface wcm:action="add">
+          <!-- Desactivar DHCP IPv4 -->
+          <Ipv4Settings>
+            <DhcpEnabled>false</DhcpEnabled>
+          </Ipv4Settings>
+
+          <!-- Identificador de la interfaz: alias 'Ethernet' -->
+          <Identifier>Ethernet</Identifier>
+
+          <!-- IP fija con prefijo -->
+          <UnicastIpAddresses>
+            <IpAddress wcm:action="add" wcm:keyValue="1">
+              {{ vm_ip }}/{{ vm_prefix }}
+            </IpAddress>
+          </UnicastIpAddresses>
+
+          <!-- Ruta por defecto -->
+          <Routes>
+            <Route wcm:action="add">
+              <Identifier>1</Identifier>
+              <Prefix>0.0.0.0/0</Prefix>
+              <NextHopAddress>{{ vm_gateway }}</NextHopAddress>
+            </Route>
+          </Routes>
+
+        </Interface>
+      </Interfaces>
 
     </component>
+
+    <!-- DNS: servidores para la misma interfaz 'Ethernet' -->
+    <component name="Microsoft-Windows-DNS-Client"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <Interfaces>
+        <Interface wcm:action="add">
+          <Identifier>Ethernet</Identifier>
+
+          <DNSServerSearchOrder>
+            <IpAddress wcm:action="add" wcm:keyValue="1">{{ vm_dns1 }}</IpAddress>
+            <IpAddress wcm:action="add" wcm:keyValue="2">{{ vm_dns2 }}</IpAddress>
+          </DNSServerSearchOrder>
+        </Interface>
+      </Interfaces>
+
+    </component>
+
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 3. OOBE SYSTEM: contraseña + autologon + IP estática         -->
+  <!-- 3. OOBE SYSTEM: solo contraseña de Administrator             -->
   <!-- ============================================================ -->
   <settings pass="oobeSystem">
     <component name="Microsoft-Windows-Shell-Setup"
@@ -133,7 +192,6 @@
                language="neutral"
                versionScope="nonSxS">
 
-      <!-- Password de Administrator -->
       <UserAccounts>
         <AdministratorPassword>
           <Value>{{ admin_password }}</Value>
@@ -141,7 +199,8 @@
         </AdministratorPassword>
       </UserAccounts>
 
-      <!-- Autologon una sola vez -->
+      <!-- (Opcional) si quieres autologon, lo puedes volver a añadir aquí -->
+      <!--
       <AutoLogon>
         <Username>Administrator</Username>
         <Enabled>true</Enabled>
@@ -151,31 +210,7 @@
           <PlainText>true</PlainText>
         </Password>
       </AutoLogon>
-
-      <!-- Primer inicio: esperar NIC y configurar IP estática -->
-      <FirstLogonCommands>
-        <SynchronousCommand wcm:action="add">
-          <Order>1</Order>
-          <Description>Configurar IP estática en Ethernet</Description>
-          <CommandLine>
-            powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "
-              Start-Sleep -Seconds 8;
-              $ErrorActionPreference = 'SilentlyContinue';
-              $i = 0;
-              while ($i -lt 5) {
-                $nic = Get-NetAdapter -Name 'Ethernet' -ErrorAction SilentlyContinue;
-                if ($nic -and $nic.Status -eq 'Up') {
-                  New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_prefix }} -DefaultGateway '{{ vm_gateway }}';
-                  Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}';
-                  break;
-                }
-                Start-Sleep -Seconds 3;
-                $i++;
-              }
-            "
-          </CommandLine>
-        </SynchronousCommand>
-      </FirstLogonCommands>
+      -->
 
     </component>
   </settings>
