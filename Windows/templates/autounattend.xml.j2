@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend"
-          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:wcm="urn:schemas-microsoft-com:WMIConfig/2002/State"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <!-- ============================================================ -->
-  <!-- 1. WINDOWS PE: idioma + disco + selección de imagen          -->
+  <!-- 1. WINDOWS PE: Lenguaje + Disco + Selección de Imagen        -->
   <!-- ============================================================ -->
   <settings pass="windowsPE">
 
@@ -13,6 +13,7 @@
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
+
       <SetupUILanguage>
         <UILanguage>es-ES</UILanguage>
       </SetupUILanguage>
@@ -20,6 +21,7 @@
       <UserLocale>es-ES</UserLocale>
       <SystemLocale>es-ES</SystemLocale>
       <InputLocale>es-ES</InputLocale>
+
     </component>
 
     <component name="Microsoft-Windows-Setup"
@@ -28,28 +30,25 @@
                language="neutral"
                versionScope="nonSxS">
 
-      <!-- Particionado UEFI en disco 0 -->
+      <!-- Particionado UEFI -->
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
           <WillWipeDisk>true</WillWipeDisk>
 
           <CreatePartitions>
-            <!-- EFI -->
             <CreatePartition wcm:action="add">
               <Order>1</Order>
               <Type>EFI</Type>
               <Size>100</Size>
             </CreatePartition>
 
-            <!-- MSR -->
             <CreatePartition wcm:action="add">
               <Order>2</Order>
               <Type>MSR</Type>
               <Size>16</Size>
             </CreatePartition>
 
-            <!-- Primary (C:) -->
             <CreatePartition wcm:action="add">
               <Order>3</Order>
               <Type>Primary</Type>
@@ -58,7 +57,7 @@
           </CreatePartitions>
 
           <ModifyPartitions>
-            <!-- EFI FAT32 -->
+
             <ModifyPartition wcm:action="add">
               <PartitionID>1</PartitionID>
               <Order>1</Order>
@@ -66,7 +65,6 @@
               <Format>FAT32</Format>
             </ModifyPartition>
 
-            <!-- C: NTFS -->
             <ModifyPartition wcm:action="add">
               <PartitionID>3</PartitionID>
               <Order>2</Order>
@@ -74,20 +72,21 @@
               <Format>NTFS</Format>
               <Letter>C</Letter>
             </ModifyPartition>
+
           </ModifyPartitions>
 
         </Disk>
       </DiskConfiguration>
 
+      <!-- Instalar imagen -->
       <ImageInstall>
         <OSImage>
-          <!-- Instalar en disco 0, partición 3 -->
+
           <InstallTo>
             <DiskID>0</DiskID>
             <PartitionID>3</PartitionID>
           </InstallTo>
 
-          <!-- Índice del install.wim -->
           <InstallFrom>
             <MetaData wcm:action="add">
               <Key>/IMAGE/INDEX</Key>
@@ -96,6 +95,7 @@
           </InstallFrom>
 
           <WillShowUI>OnError</WillShowUI>
+
         </OSImage>
       </ImageInstall>
 
@@ -109,11 +109,11 @@
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 2. SPECIALIZE: hostname + IP estática + DNS                  -->
+  <!-- 2. SPECIALIZE: Hostname + IP estática + DNS                  -->
   <!-- ============================================================ -->
   <settings pass="specialize">
 
-    <!-- Nombre del servidor -->
+    <!-- Nombre del equipo -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -122,7 +122,7 @@
       <ComputerName>{{ vm_name }}</ComputerName>
     </component>
 
-    <!-- TCP/IP: IP fija + ruta por defecto en interfaz 'Ethernet' -->
+    <!-- IP Estática -->
     <component name="Microsoft-Windows-TCPIP"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -131,26 +131,30 @@
 
       <Interfaces>
         <Interface wcm:action="add">
-          <!-- Desactivar DHCP IPv4 -->
+
+          <!-- 1. IPv4 -->
           <Ipv4Settings>
             <DhcpEnabled>false</DhcpEnabled>
           </Ipv4Settings>
 
-          <!-- Identificador de la interfaz: alias 'Ethernet' -->
+          <!-- 2. IPv6 (se deja deshabilitado pero declarado) -->
+          <Ipv6Settings>
+            <DhcpEnabled>false</DhcpEnabled>
+          </Ipv6Settings>
+
+          <!-- 3. NIC -->
           <Identifier>Ethernet</Identifier>
 
-          <!-- IP fija con prefijo -->
+          <!-- 4. Dirección IP -->
           <UnicastIpAddresses>
-            <IpAddress wcm:action="add" wcm:keyValue="1">
-              {{ vm_ip }}/{{ vm_prefix }}
-            </IpAddress>
+            <IpAddress>{{ vm_ip }}/{{ vm_prefix }}</IpAddress>
           </UnicastIpAddresses>
 
-          <!-- Ruta por defecto -->
+          <!-- 5. Gateway -->
           <Routes>
             <Route wcm:action="add">
               <Identifier>1</Identifier>
-              <Prefix>0.0.0.0/0</Prefix>
+              <Prefix>0</Prefix>
               <NextHopAddress>{{ vm_gateway }}</NextHopAddress>
             </Route>
           </Routes>
@@ -160,7 +164,7 @@
 
     </component>
 
-    <!-- DNS: servidores para la misma interfaz 'Ethernet' -->
+    <!-- DNS -->
     <component name="Microsoft-Windows-DNS-Client"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -169,12 +173,14 @@
 
       <Interfaces>
         <Interface wcm:action="add">
+
           <Identifier>Ethernet</Identifier>
 
           <DNSServerSearchOrder>
             <IpAddress wcm:action="add" wcm:keyValue="1">{{ vm_dns1 }}</IpAddress>
             <IpAddress wcm:action="add" wcm:keyValue="2">{{ vm_dns2 }}</IpAddress>
           </DNSServerSearchOrder>
+
         </Interface>
       </Interfaces>
 
@@ -183,24 +189,17 @@
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 3. OOBE SYSTEM: solo contraseña de Administrator             -->
+  <!-- 3. OOBE SYSTEM: Password + Autologon de Administrator        -->
   <!-- ============================================================ -->
   <settings pass="oobeSystem">
+
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
 
-      <UserAccounts>
-        <AdministratorPassword>
-          <Value>{{ admin_password }}</Value>
-          <PlainText>true</PlainText>
-        </AdministratorPassword>
-      </UserAccounts>
-
-      <!-- (Opcional) si quieres autologon, lo puedes volver a añadir aquí -->
-      <!--
+      <!-- Autologon UNA vez con Administrator -->
       <AutoLogon>
         <Username>Administrator</Username>
         <Enabled>true</Enabled>
@@ -210,9 +209,17 @@
           <PlainText>true</PlainText>
         </Password>
       </AutoLogon>
-      -->
+
+      <!-- Password de Administrator -->
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>{{ admin_password }}</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
 
     </component>
+
   </settings>
 
 </unattend>
