@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <unattend xmlns="urn:schemas-microsoft-com:unattend"
-          xmlns:wcm="urn:schemas-microsoft-com:WMIConfig/2002/State"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <!-- ============================================================ -->
-  <!-- 1. WINDOWS PE: Lenguaje + Disco + Selección de Imagen        -->
+  <!-- 1. WINDOWS PE: idioma + disco + selección de imagen          -->
   <!-- ============================================================ -->
   <settings pass="windowsPE">
 
@@ -30,7 +30,7 @@
                language="neutral"
                versionScope="nonSxS">
 
-      <!-- Particionado UEFI -->
+      <!-- Particionado UEFI en disco 0 -->
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
@@ -122,7 +122,7 @@
       <ComputerName>{{ vm_name }}</ComputerName>
     </component>
 
-    <!-- IP Estática -->
+    <!-- IP Estática en 'Ethernet' -->
     <component name="Microsoft-Windows-TCPIP"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -137,7 +137,7 @@
             <DhcpEnabled>false</DhcpEnabled>
           </Ipv4Settings>
 
-          <!-- 2. IPv6 (se deja deshabilitado pero declarado) -->
+          <!-- 2. IPv6 (lo declaramos para no invalidar el nodo) -->
           <Ipv6Settings>
             <DhcpEnabled>false</DhcpEnabled>
           </Ipv6Settings>
@@ -145,16 +145,16 @@
           <!-- 3. NIC -->
           <Identifier>Ethernet</Identifier>
 
-          <!-- 4. Dirección IP -->
+          <!-- 4. Dirección IP estática -->
           <UnicastIpAddresses>
-            <IpAddress>{{ vm_ip }}/{{ vm_prefix }}</IpAddress>
+            <IpAddress wcm:action="add">{{ vm_ip }}/{{ vm_prefix }}</IpAddress>
           </UnicastIpAddresses>
 
-          <!-- 5. Gateway -->
+          <!-- 5. Gateway por defecto -->
           <Routes>
             <Route wcm:action="add">
               <Identifier>1</Identifier>
-              <Prefix>0</Prefix>
+              <Prefix>0.0.0.0/0</Prefix>
               <NextHopAddress>{{ vm_gateway }}</NextHopAddress>
             </Route>
           </Routes>
