@@ -189,6 +189,49 @@
         </Password>
       </AutoLogon>
 
+      <!-- PLAN B: forzar IP, máscara (como prefix), gateway y DNS en el primer logon -->
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Forzar IP estática</Description>
+          <CommandLine>
+            powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "
+              Start-Sleep -Seconds 8;
+              $ip   = '{{ vm_ip }}';
+              $pref = {{ vm_mask }};
+              $gw   = '{{ vm_gateway }}';
+              $dns1 = '{{ vm_dns1 }}';
+              $dns2 = '{{ vm_dns2 }}';
+
+              $iface = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Sort-Object ifIndex | Select-Object -First 1;
+              if ($iface) {
+                $alias = $iface.Name;
+
+                Get-NetIPAddress -InterfaceAlias $alias -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                  Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue;
+
+                New-NetIPAddress -InterfaceAlias $alias `
+                                  -IPAddress $ip `
+                                  -PrefixLength $pref `
+                                  -DefaultGateway $gw `
+                                  -AddressFamily IPv4 `
+                                  -ErrorAction SilentlyContinue;
+
+                $dns = @();
+                if ($dns1 -ne '') { $dns += $dns1 }
+                if ($dns2 -ne '') { $dns += $dns2 }
+                if ($dns.Count -gt 0) {
+                  Set-DnsClientServerAddress -InterfaceAlias $alias `
+                                             -ServerAddresses $dns `
+                                             -ErrorAction SilentlyContinue;
+                }
+              }
+            "
+          </CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+
+      <!-- Saltar pantallas de OOBE -->
       <OOBE>
         <HideEULAPage>true</HideEULAPage>
         <SkipUserOOBE>true</SkipUserOOBE>
