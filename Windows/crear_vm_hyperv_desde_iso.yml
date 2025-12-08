@@ -15,7 +15,7 @@
       - SMXFCHVB
       - SMXHYPVA
 
-    # Password Administrador local (lo usa autounattend)
+    # Contraseña de Administrador (se puede sobreescribir por extra_vars)
     admin_password: "Passw0rd."
 
     # vSwitch por defecto
@@ -26,10 +26,10 @@
       - 'D'
       - 'E'
 
-    # ISO por defecto en NAS (Windows Server eval es-es)
+    # ISO por defecto en NAS (Windows 2022 eval)
     iso_path_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
-    # NAS para SMB Global Mapping
+    # NAS para el SMB Global Mapping
     nas_server: '10.138.120.130'
     nas_share: 'isos'
     nas_user: 'NASUSER_AQUI'
@@ -37,9 +37,6 @@
 
     # Ruta local de oscdimg
     oscdimg_path: 'C:\\Oscdimg\\oscdimg.exe'
-
-    # Índice de imagen dentro de install.wim (lo usa autounattend)
-    vm_image_index: 4
 
   tasks:
 
@@ -54,13 +51,15 @@
           - memory_gb is defined
           - cpu is defined
           - disk_gb is defined
-          - vm_cidr is defined
+          - vm_ip is defined
+          - vm_mask is defined
           - vm_gateway is defined
           - vm_dns1 is defined
+          - vm_image_index is defined
           - admin_password is defined
         fail_msg: >-
           Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb,
-          vm_cidr, vm_gateway, vm_dns1, admin_password.
+          vm_ip, vm_mask, vm_gateway, vm_dns1, vm_image_index, admin_password.
 
     - name: Validar hyperv_host permitido
       ansible.builtin.assert:
@@ -75,15 +74,11 @@
         memory_bytes: "{{ (memory_gb | int) * 1073741824 }}"
         disk_bytes: "{{ (disk_gb | int) * 1073741824 }}"
         cpu_count: "{{ cpu | int }}"
+        vm_dns2_eff: "{{ vm_dns2 | default(vm_dns1) }}"
+
         unattended_xml_dir: "C:\\autounattend\\{{ vm_name }}"
         unattended_xml_path: "C:\\autounattend\\{{ vm_name }}\\autounattend.xml"
         unattended_iso_path: "C:\\ISOs\\{{ vm_name }}_autounattend.iso"
-
-    - name: Derivar vm_ip, vm_prefix y vm_dns2 (para uso futuro)
-      ansible.builtin.set_fact:
-        vm_ip: "{{ vm_cidr.split('/')[0] }}"
-        vm_prefix: "{{ vm_cidr.split('/')[1] | int }}"
-        vm_dns2: "{{ vm_dns2 | default(vm_dns1) }}"
 
     # -------------------------------------------------------------------
     # 1) SMB Global Mapping hacia la NAS
@@ -169,7 +164,6 @@
             Remove-Item -Path $IsoPath -Force
           }
 
-          # RAÍZ de la ISO = autounattend.xml
           $args = @('-n','-m','-d', $SourcePath, $IsoPath)
 
           Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
@@ -230,12 +224,8 @@
           $VhdPath = Join-Path $vhdRoot "$VmName.vhdx"
 
           # 2. Validar ISOs
-          if (-not (Test-Path $IsoPath)) {
-            throw "No se puede acceder a la ISO de Windows: $IsoPath"
-          }
-          if (-not (Test-Path $UnattendIsoPath)) {
-            throw "No se puede acceder a la ISO unattended: $UnattendIsoPath"
-          }
+          if (-not (Test-Path $IsoPath))          { throw "No se puede acceder a la ISO de Windows: $IsoPath" }
+          if (-not (Test-Path $UnattendIsoPath))  { throw "No se puede acceder a la ISO unattended: $UnattendIsoPath" }
 
           # 3. Crear VHDX si no existe
           if (-not (Test-Path $VhdPath)) {
@@ -245,7 +235,7 @@
             Write-Host "VHD ya existía: $VhdPath"
           }
 
-          # 4. Crear VM SIN VHD (NoVHD)
+          # 4. Crear VM SIN VHD (NoVHD) para controlar puertos
           $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
           if (-not $vm) {
             New-VM -Name $VmName `
@@ -298,7 +288,7 @@
             } while ($vm.State -ne 'Off')
           }
 
-          # 8. Quitar todos los DVD drives previos
+          # 8. Quitar todos los DVD drives
           Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue |
             ForEach-Object {
               Remove-VMDvdDrive -VMName $VmName `
@@ -317,48 +307,19 @@
                                         -ControllerLocation 1 `
                                         -Path $UnattendIsoPath
 
-          # 10. Reordenar BootOrder usando las entradas existentes (compatible con tu Hyper-V)
-          $fw        = Get-VMFirmware -VMName $VmName
-          $bootOrder = $fw.BootOrder
-
-          Write-Host "BootOrder ORIGINAL:"
-          $bootOrder | ForEach-Object {
-            " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
-          } | Out-String | Write-Host
-
-          # Clasificar entradas según tipo/nombre
-          $dvdEntries = $bootOrder | Where-Object {
-            $_.FirmwareDeviceName -like "*DVD*" -or $_.FirmwareDeviceName -like "*CD*"
-          }
-
-          $driveEntries = $bootOrder | Where-Object {
-            $_.BootType -eq "Drive" -and ($dvdEntries -notcontains $_)
-          }
-
-          $fileEntries = $bootOrder | Where-Object {
-            $_.BootType -eq "File"
-          }
-
-          $networkEntries = $bootOrder | Where-Object {
-            $_.BootType -eq "Network"
-          }
-
-          # Nuevo orden: DVD(s) -> Drive(s) -> File -> Network
+          # 10. Orden de arranque: DVD Windows primero, luego disco
+          $fw  = Get-VMFirmware -VMName $VmName
+          $hdd = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
           $desiredOrder = @()
-          $desiredOrder += $dvdEntries
-          $desiredOrder += $driveEntries
-          $desiredOrder += $fileEntries
-          $desiredOrder += $networkEntries
+          if ($dvdMain) { $desiredOrder += $dvdMain }
+          if ($hdd)     { $desiredOrder += $hdd }
 
           Set-VMFirmware -VMName $VmName `
-            -EnableSecureBoot Off `
-            -BootOrder $desiredOrder
-
-          Write-Host "BootOrder NUEVO:"
-          (Get-VMFirmware -VMName $VmName).BootOrder |
-            ForEach-Object {
-              " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
-            } | Out-String | Write-Host
+            -FirstBootDevice $dvdMain `
+            -BootOrder $desiredOrder `
+            -EnableSecureBoot On `
+            -SecureBootTemplate 'MicrosoftWindows' `
+            -DisableStartupPrompt $true
 
           # 11. Iniciar VM
           $vm = Get-VM -Name $VmName
