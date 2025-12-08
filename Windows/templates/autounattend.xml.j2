@@ -3,9 +3,6 @@
           xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
-  <!-- ============================================================ -->
-  <!-- 1. WINDOWS PE: idioma + disco + imagen                       -->
-  <!-- ============================================================ -->
   <settings pass="windowsPE">
 
     <component name="Microsoft-Windows-International-Core-WinPE"
@@ -32,7 +29,6 @@
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
           <WillWipeDisk>true</WillWipeDisk>
-
           <CreatePartitions>
             <CreatePartition wcm:action="add">
               <Order>1</Order>
@@ -50,7 +46,6 @@
               <Extend>true</Extend>
             </CreatePartition>
           </CreatePartitions>
-
           <ModifyPartitions>
             <ModifyPartition wcm:action="add">
               <PartitionID>1</PartitionID>
@@ -66,7 +61,6 @@
               <Letter>C</Letter>
             </ModifyPartition>
           </ModifyPartitions>
-
         </Disk>
       </DiskConfiguration>
 
@@ -95,12 +89,10 @@
     </component>
   </settings>
 
-  <!-- ============================================================ -->
-  <!-- 2. SPECIALIZE: hostname + TCP/IP + DNS                       -->
-  <!-- ============================================================ -->
+  ---
+
   <settings pass="specialize">
 
-    <!-- Hostname -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -110,39 +102,27 @@
       <TimeZone>Central Standard Time (Mexico)</TimeZone>
     </component>
 
-    <!-- TCP/IP (misma lógica que ya tenías, solo cambia vm_prefix -> vm_mask) -->
     <component name="Microsoft-Windows-TCPIP"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
-
       <Interfaces>
         <Interface wcm:action="add">
-
           <Ipv4Settings>
             <DhcpEnabled>false</DhcpEnabled>
+            <IPAddress wcm:action="add" wcm:keyValue="1">{{ vm_ip }}</IPAddress>
+            <SubnetMask wcm:action="add" wcm:keyValue="1">{{ vm_mask | ipaddr('netmask') }}</SubnetMask>
+            <DefaultGateway wcm:action="add" wcm:keyValue="1">{{ vm_gateway }}</DefaultGateway>
           </Ipv4Settings>
-
           <Ipv6Settings>
             <DhcpEnabled>false</DhcpEnabled>
           </Ipv6Settings>
-
           <Identifier>Ethernet</Identifier>
-
-          <Routes>
-            <Route wcm:action="add">
-              <Identifier>1</Identifier>
-              <Prefix>0.0.0.0/0</Prefix>
-              <NextHopAddress>{{ vm_gateway }}</NextHopAddress>
-            </Route>
-          </Routes>
-
         </Interface>
       </Interfaces>
     </component>
 
-    <!-- DNS (igual que cuando sí se aplicaba el DNS) -->
     <component name="Microsoft-Windows-DNS-Client"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -161,9 +141,8 @@
 
   </settings>
 
-  <!-- ============================================================ -->
-  <!-- 3. OOBE SYSTEM: idioma final + admin + autologon             -->
-  <!-- ============================================================ -->
+  ---
+
   <settings pass="oobeSystem">
 
     <component name="Microsoft-Windows-Shell-Setup"
@@ -189,56 +168,13 @@
         </Password>
       </AutoLogon>
 
-      <!-- PLAN B: forzar IP, máscara (como prefix), gateway y DNS en el primer logon -->
-      <FirstLogonCommands>
-        <SynchronousCommand wcm:action="add">
-          <Order>1</Order>
-          <Description>Forzar IP estática</Description>
-          <CommandLine>
-            powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "
-              Start-Sleep -Seconds 8;
-              $ip   = '{{ vm_ip }}';
-              $pref = {{ vm_mask }};
-              $gw   = '{{ vm_gateway }}';
-              $dns1 = '{{ vm_dns1 }}';
-              $dns2 = '{{ vm_dns2 }}';
-
-              $iface = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Sort-Object ifIndex | Select-Object -First 1;
-              if ($iface) {
-                $alias = $iface.Name;
-
-                Get-NetIPAddress -InterfaceAlias $alias -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-                  Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue;
-
-                New-NetIPAddress -InterfaceAlias $alias `
-                                  -IPAddress $ip `
-                                  -PrefixLength $pref `
-                                  -DefaultGateway $gw `
-                                  -AddressFamily IPv4 `
-                                  -ErrorAction SilentlyContinue;
-
-                $dns = @();
-                if ($dns1 -ne '') { $dns += $dns1 }
-                if ($dns2 -ne '') { $dns += $dns2 }
-                if ($dns.Count -gt 0) {
-                  Set-DnsClientServerAddress -InterfaceAlias $alias `
-                                             -ServerAddresses $dns `
-                                             -ErrorAction SilentlyContinue;
-                }
-              }
-            "
-          </CommandLine>
-        </SynchronousCommand>
-      </FirstLogonCommands>
-
-      <!-- Saltar pantallas de OOBE -->
       <OOBE>
         <HideEULAPage>true</HideEULAPage>
         <SkipUserOOBE>true</SkipUserOOBE>
         <SkipMachineOOBE>true</SkipMachineOOBE>
       </OOBE>
 
-    </component>
+      </component>
 
   </settings>
 
