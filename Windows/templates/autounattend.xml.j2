@@ -93,7 +93,6 @@
   <!-- ====================== specialize ====================== -->
   <settings pass="specialize">
 
-    <!-- Sólo nombre de equipo y zona horaria, nada de red aquí -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -127,7 +126,7 @@
         <LogonCount>1</LogonCount>
         <Password>
           <Value>{{ admin_password }}</Value>
-          <PlainText>true</PlainText>
+          <PlainText>true</Password>
         </Password>
       </AutoLogon>
 
@@ -137,13 +136,12 @@
         <SkipMachineOOBE>true</SkipMachineOOBE>
       </OOBE>
 
-      <!-- Aquí configuramos la red al primer inicio -->
       <FirstLogonCommands>
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
           <Description>Configurar red IPv4 estática</Description>
           <CommandLine>
-            powershell -ExecutionPolicy Bypass -Command "New-NetIPAddress -InterfaceAlias (Get-NetAdapter -Physical | Select-Object -First 1).Name -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_mask }} -DefaultGateway '{{ vm_gateway }}' -ErrorAction SilentlyContinue; Set-DnsClientServerAddress -InterfaceAlias (Get-NetAdapter -Physical | Select-Object -First 1).Name -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}'"
+            powershell.exe -ExecutionPolicy Bypass -Command "New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_mask }} -DefaultGateway '{{ vm_gateway }}' -AddressFamily IPv4 -ErrorAction SilentlyContinue; Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}'" *> C:\netcfg.log
           </CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
