@@ -130,13 +130,6 @@
 
           <Identifier>Ethernet</Identifier>
 
-          <!-- Aquí es donde antes estaba vm_prefix: ahora es vm_mask tal cual -->
-          <UnicastIpAddresses>
-            <IpAddress wcm:action="add" wcm:keyValue="1">
-              {{ vm_ip }}/{{ vm_mask }}
-            </IpAddress>
-          </UnicastIpAddresses>
-
           <Routes>
             <Route wcm:action="add">
               <Identifier>1</Identifier>
