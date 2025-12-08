@@ -103,7 +103,7 @@
       <TimeZone>Central Standard Time (Mexico)</TimeZone>
     </component>
 
-    <!-- FORZAR IP / MÁSCARA / GATEWAY / DNS CON NETSH -->
+    <!-- Configurar red con PowerShell (sin netsh) -->
     <component name="Microsoft-Windows-Deployment"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -111,30 +111,11 @@
                versionScope="nonSxS">
       <RunSynchronous>
 
-        <!-- IP estática + máscara + gateway (+ métrica 1) -->
         <RunSynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <Description>Configurar IP estática</Description>
+          <Description>Configurar red IPv4 estática</Description>
           <Path>
-            cmd /c netsh interface ipv4 set address name="Ethernet" static address={{ vm_ip }} mask={{ vm_mask }} gateway={{ vm_gateway }} gwmetric=1
-          </Path>
-        </RunSynchronousCommand>
-
-        <!-- DNS primario -->
-        <RunSynchronousCommand wcm:action="add">
-          <Order>2</Order>
-          <Description>Configurar DNS primario</Description>
-          <Path>
-            cmd /c netsh interface ipv4 set dnsservers name="Ethernet" static {{ vm_dns1 }} primary
-          </Path>
-        </RunSynchronousCommand>
-
-        <!-- DNS secundario -->
-        <RunSynchronousCommand wcm:action="add">
-          <Order>3</Order>
-          <Description>Configurar DNS secundario</Description>
-          <Path>
-            cmd /c netsh interface ipv4 add dnsservers name="Ethernet" {{ vm_dns2 }} index=2
+            powershell -ExecutionPolicy Bypass -Command "$iface = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1; New-NetIPAddress -InterfaceIndex $iface.ifIndex -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_mask }} -DefaultGateway '{{ vm_gateway }}'; Set-DnsClientServerAddress -InterfaceIndex $iface.ifIndex -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}'"
           </Path>
         </RunSynchronousCommand>
 
