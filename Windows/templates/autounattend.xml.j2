@@ -4,17 +4,15 @@
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
   <!-- ============================================================ -->
-  <!-- 1. WINDOWS PE: idioma + disco + selección de imagen          -->
+  <!-- 1. WINDOWS PE: idioma + disco + imagen                       -->
   <!-- ============================================================ -->
   <settings pass="windowsPE">
 
-    <!-- Idioma de la interfaz de Setup (para que NO pregunte) -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
-               
       <SetupUILanguage>
         <UILanguage>es-ES</UILanguage>
       </SetupUILanguage>
@@ -24,14 +22,12 @@
       <InputLocale>es-ES</InputLocale>
     </component>
 
-    <!-- Particionado + imagen -->
     <component name="Microsoft-Windows-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
 
-      <!-- Particionado UEFI en disco 0 -->
       <DiskConfiguration>
         <Disk wcm:action="add">
           <DiskID>0</DiskID>
@@ -59,14 +55,14 @@
             <ModifyPartition wcm:action="add">
               <PartitionID>1</PartitionID>
               <Order>1</Order>
-              <Label>System</Label>
               <Format>FAT32</Format>
+              <Label>System</Label>
             </ModifyPartition>
             <ModifyPartition wcm:action="add">
               <PartitionID>3</PartitionID>
               <Order>2</Order>
-              <Label>Windows</Label>
               <Format>NTFS</Format>
+              <Label>Windows</Label>
               <Letter>C</Letter>
             </ModifyPartition>
           </ModifyPartitions>
@@ -74,7 +70,6 @@
         </Disk>
       </DiskConfiguration>
 
-      <!-- Imagen a instalar -->
       <ImageInstall>
         <OSImage>
           <InstallFrom>
@@ -101,20 +96,21 @@
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 2. SPECIALIZE: Hostname + IP estática + DNS                  -->
+  <!-- 2. SPECIALIZE: hostname + TCP/IP + DNS                       -->
   <!-- ============================================================ -->
   <settings pass="specialize">
 
-    <!-- Nombre del equipo -->
+    <!-- Hostname -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
       <ComputerName>{{ vm_name }}</ComputerName>
+      <TimeZone>Central Standard Time (Mexico)</TimeZone>
     </component>
 
-    <!-- IP estática (Ethernet) -->
+    <!-- TCP/IP (misma lógica que ya tenías, solo cambia vm_prefix -> vm_mask) -->
     <component name="Microsoft-Windows-TCPIP"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -124,21 +120,23 @@
       <Interfaces>
         <Interface wcm:action="add">
 
-          <Identifier>Ethernet</Identifier>
-
           <Ipv4Settings>
             <DhcpEnabled>false</DhcpEnabled>
           </Ipv4Settings>
 
-          <!-- IP SIN máscara -->
+          <Ipv6Settings>
+            <DhcpEnabled>false</DhcpEnabled>
+          </Ipv6Settings>
+
+          <Identifier>Ethernet</Identifier>
+
+          <!-- Aquí es donde antes estaba vm_prefix: ahora es vm_mask tal cual -->
           <UnicastIpAddresses>
-            <IpAddress wcm:action="add" wcm:keyValue="1">{{ vm_ip }}</IpAddress>
+            <IpAddress wcm:action="add" wcm:keyValue="1">
+              {{ vm_ip }}/{{ vm_mask }}
+            </IpAddress>
           </UnicastIpAddresses>
 
-          <!-- Máscara -->
-          <SubnetMask>{{ vm_mask }}</SubnetMask>
-
-          <!-- Gateway -->
           <Routes>
             <Route wcm:action="add">
               <Identifier>1</Identifier>
@@ -149,16 +147,14 @@
 
         </Interface>
       </Interfaces>
-
     </component>
 
-    <!-- DNS -->
+    <!-- DNS (igual que cuando sí se aplicaba el DNS) -->
     <component name="Microsoft-Windows-DNS-Client"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
-
       <Interfaces>
         <Interface wcm:action="add">
           <Identifier>Ethernet</Identifier>
@@ -168,13 +164,12 @@
           </DNSServerSearchOrder>
         </Interface>
       </Interfaces>
-
     </component>
 
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 3. OOBE SYSTEM: idioma final + password + autologon          -->
+  <!-- 3. OOBE SYSTEM: idioma final + admin + autologon             -->
   <!-- ============================================================ -->
   <settings pass="oobeSystem">
 
@@ -184,13 +179,11 @@
                language="neutral"
                versionScope="nonSxS">
 
-      <!-- Idioma de la sesión (para que OOBE no pregunte) -->
       <InputLocale>es-ES</InputLocale>
       <SystemLocale>es-ES</SystemLocale>
       <UILanguage>es-ES</UILanguage>
       <UserLocale>es-ES</UserLocale>
 
-      <!-- Password Administrator -->
       <UserAccounts>
         <AdministratorPassword>
           <Value>{{ admin_password }}</Value>
@@ -198,7 +191,6 @@
         </AdministratorPassword>
       </UserAccounts>
 
-      <!-- Autologon una sola vez -->
       <AutoLogon>
         <Username>Administrator</Username>
         <Enabled>true</Enabled>
@@ -209,7 +201,6 @@
         </Password>
       </AutoLogon>
 
-      <!-- Saltar pantallas de OOBE -->
       <OOBE>
         <HideEULAPage>true</HideEULAPage>
         <SkipUserOOBE>true</SkipUserOOBE>
