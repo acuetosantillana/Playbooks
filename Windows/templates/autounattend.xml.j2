@@ -8,22 +8,23 @@
   <!-- ============================================================ -->
   <settings pass="windowsPE">
 
+    <!-- Idioma de la interfaz de Setup (para que NO pregunte) -->
     <component name="Microsoft-Windows-International-Core-WinPE"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
-
+               
       <SetupUILanguage>
         <UILanguage>es-ES</UILanguage>
       </SetupUILanguage>
       <UILanguage>es-ES</UILanguage>
-      <UserLocale>es-ES</UserLocale>
       <SystemLocale>es-ES</SystemLocale>
+      <UserLocale>es-ES</UserLocale>
       <InputLocale>es-ES</InputLocale>
-
     </component>
 
+    <!-- Particionado + imagen -->
     <component name="Microsoft-Windows-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -42,13 +43,11 @@
               <Type>EFI</Type>
               <Size>100</Size>
             </CreatePartition>
-
             <CreatePartition wcm:action="add">
               <Order>2</Order>
               <Type>MSR</Type>
               <Size>16</Size>
             </CreatePartition>
-
             <CreatePartition wcm:action="add">
               <Order>3</Order>
               <Type>Primary</Type>
@@ -57,14 +56,12 @@
           </CreatePartitions>
 
           <ModifyPartitions>
-
             <ModifyPartition wcm:action="add">
               <PartitionID>1</PartitionID>
               <Order>1</Order>
               <Label>System</Label>
               <Format>FAT32</Format>
             </ModifyPartition>
-
             <ModifyPartition wcm:action="add">
               <PartitionID>3</PartitionID>
               <Order>2</Order>
@@ -72,30 +69,25 @@
               <Format>NTFS</Format>
               <Letter>C</Letter>
             </ModifyPartition>
-
           </ModifyPartitions>
 
         </Disk>
       </DiskConfiguration>
 
-      <!-- Instalar imagen -->
+      <!-- Imagen a instalar -->
       <ImageInstall>
         <OSImage>
-
-          <InstallTo>
-            <DiskID>0</DiskID>
-            <PartitionID>3</PartitionID>
-          </InstallTo>
-
           <InstallFrom>
             <MetaData wcm:action="add">
               <Key>/IMAGE/INDEX</Key>
               <Value>{{ vm_image_index }}</Value>
             </MetaData>
           </InstallFrom>
-
-          <WillShowUI>OnError</WillShowUI>
-
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <WillShowUI>Never</WillShowUI>
         </OSImage>
       </ImageInstall>
 
@@ -122,7 +114,7 @@
       <ComputerName>{{ vm_name }}</ComputerName>
     </component>
 
-    <!-- IP Estática en 'Ethernet' -->
+    <!-- IP estática (Ethernet) -->
     <component name="Microsoft-Windows-TCPIP"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -132,30 +124,21 @@
       <Interfaces>
         <Interface wcm:action="add">
 
-          <!-- 1. IPv4 -->
+          <Identifier>Ethernet</Identifier>
+
           <Ipv4Settings>
             <DhcpEnabled>false</DhcpEnabled>
           </Ipv4Settings>
 
-          <!-- 2. IPv6 (lo declaramos para no invalidar el nodo) -->
-          <Ipv6Settings>
-            <DhcpEnabled>false</DhcpEnabled>
-          </Ipv6Settings>
-
-          <!-- 3. NIC -->
-          <Identifier>Ethernet</Identifier>
-
-          <!-- 4. Dirección IP estática -->
+          <!-- IP SIN máscara -->
           <UnicastIpAddresses>
-              <IpAddress wcm:action="add" wcm:keyValue="1">
-                  {{ vm_ip }}
-              </IpAddress>
+            <IpAddress wcm:action="add" wcm:keyValue="1">{{ vm_ip }}</IpAddress>
           </UnicastIpAddresses>
-         
-          <!-- Subnet mask -->
+
+          <!-- Máscara -->
           <SubnetMask>{{ vm_mask }}</SubnetMask>
 
-          <!-- 5. Gateway por defecto -->
+          <!-- Gateway -->
           <Routes>
             <Route wcm:action="add">
               <Identifier>1</Identifier>
@@ -178,14 +161,11 @@
 
       <Interfaces>
         <Interface wcm:action="add">
-
           <Identifier>Ethernet</Identifier>
-
           <DNSServerSearchOrder>
             <IpAddress wcm:action="add" wcm:keyValue="1">{{ vm_dns1 }}</IpAddress>
             <IpAddress wcm:action="add" wcm:keyValue="2">{{ vm_dns2 }}</IpAddress>
           </DNSServerSearchOrder>
-
         </Interface>
       </Interfaces>
 
@@ -194,7 +174,7 @@
   </settings>
 
   <!-- ============================================================ -->
-  <!-- 3. OOBE SYSTEM: Password + Autologon de Administrator        -->
+  <!-- 3. OOBE SYSTEM: idioma final + password + autologon          -->
   <!-- ============================================================ -->
   <settings pass="oobeSystem">
 
@@ -204,7 +184,21 @@
                language="neutral"
                versionScope="nonSxS">
 
-      <!-- Autologon UNA vez con Administrator -->
+      <!-- Idioma de la sesión (para que OOBE no pregunte) -->
+      <InputLocale>es-ES</InputLocale>
+      <SystemLocale>es-ES</SystemLocale>
+      <UILanguage>es-ES</UILanguage>
+      <UserLocale>es-ES</UserLocale>
+
+      <!-- Password Administrator -->
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>{{ admin_password }}</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+
+      <!-- Autologon una sola vez -->
       <AutoLogon>
         <Username>Administrator</Username>
         <Enabled>true</Enabled>
@@ -215,13 +209,12 @@
         </Password>
       </AutoLogon>
 
-      <!-- Password de Administrator -->
-      <UserAccounts>
-        <AdministratorPassword>
-          <Value>{{ admin_password }}</Value>
-          <PlainText>true</PlainText>
-        </AdministratorPassword>
-      </UserAccounts>
+      <!-- Saltar pantallas de OOBE -->
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <SkipUserOOBE>true</SkipUserOOBE>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+      </OOBE>
 
     </component>
 
