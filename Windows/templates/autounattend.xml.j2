@@ -102,27 +102,6 @@
       <TimeZone>Central Standard Time (Mexico)</TimeZone>
     </component>
 
-    <component name="Microsoft-Windows-TCPIP"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-      <Interfaces>
-        <Interface wcm:action="add">
-          <Ipv4Settings>
-            <DhcpEnabled>false</DhcpEnabled>
-            <IPAddress wcm:action="add" wcm:keyValue="1">{{ vm_ip }}</IPAddress>
-            <SubnetMask wcm:action="add" wcm:keyValue="1">{{ vm_mask | ipaddr('netmask') }}</SubnetMask>
-            <DefaultGateway wcm:action="add" wcm:keyValue="1">{{ vm_gateway }}</DefaultGateway>
-          </Ipv4Settings>
-          <Ipv6Settings>
-            <DhcpEnabled>false</DhcpEnabled>
-          </Ipv6Settings>
-          <Identifier>Ethernet</Identifier>
-        </Interface>
-      </Interfaces>
-    </component>
-
     <component name="Microsoft-Windows-DNS-Client"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
