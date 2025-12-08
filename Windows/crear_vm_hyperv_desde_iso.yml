@@ -308,18 +308,47 @@
                                         -Path $UnattendIsoPath
 
           # 10. Orden de arranque: DVD Windows primero, luego disco
-          $fw  = Get-VMFirmware -VMName $VmName
-          $hdd = Get-VMHardDiskDrive -VMName $VmName | Select-Object -First 1
+          $fw        = Get-VMFirmware -VMName $VmName
+          $bootOrder = $fw.BootOrder
+
+          Write-Host "BootOrder ORIGINAL:"
+          $bootOrder | ForEach-Object {
+            " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
+          } | Out-String | Write-Host
+
+          # Clasificar entradas según tipo/nombre
+          $dvdEntries = $bootOrder | Where-Object {
+            $_.FirmwareDeviceName -like "*DVD*" -or $_.FirmwareDeviceName -like "*CD*"
+          }
+
+          $driveEntries = $bootOrder | Where-Object {
+            $_.BootType -eq "Drive" -and ($dvdEntries -notcontains $_)
+          }
+
+          $fileEntries = $bootOrder | Where-Object {
+            $_.BootType -eq "File"
+          }
+
+          $networkEntries = $bootOrder | Where-Object {
+            $_.BootType -eq "Network"
+          }
+
+          # Nuevo orden: DVD(s) -> Drive(s) -> File -> Network
           $desiredOrder = @()
-          if ($dvdMain) { $desiredOrder += $dvdMain }
-          if ($hdd)     { $desiredOrder += $hdd }
+          $desiredOrder += $dvdEntries
+          $desiredOrder += $driveEntries
+          $desiredOrder += $fileEntries
+          $desiredOrder += $networkEntries
 
           Set-VMFirmware -VMName $VmName `
-            -FirstBootDevice $dvdMain `
-            -BootOrder $desiredOrder `
-            -EnableSecureBoot On `
-            -SecureBootTemplate 'MicrosoftWindows' `
-            -DisableStartupPrompt $true
+            -EnableSecureBoot Off `
+            -BootOrder $desiredOrder
+
+          Write-Host "BootOrder NUEVO:"
+          (Get-VMFirmware -VMName $VmName).BootOrder |
+            ForEach-Object {
+              " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
+            } | Out-String | Write-Host
 
           # 11. Iniciar VM
           $vm = Get-VM -Name $VmName
