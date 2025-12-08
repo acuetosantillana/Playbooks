@@ -3,206 +3,228 @@
           xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
-    <!-- ============================= -->
-    <!-- PASS 1: windowsPE             -->
-    <!-- ============================= -->
-    <settings pass="windowsPE">
-        <component name="Microsoft-Windows-Setup"
-                   processorArchitecture="amd64"
-                   publicKeyToken="31bf3856ad364e35"
-                   language="neutral"
-                   versionScope="nonSxS">
+  <!-- ============================================================ -->
+  <!-- 1. WINDOWS PE: idioma + disco + selección de imagen          -->
+  <!-- ============================================================ -->
+  <settings pass="windowsPE">
 
-            <!-- Partitioning UEFI -->
-            <DiskConfiguration>
-                <Disk wcm:action="add">
-                    <DiskID>0</DiskID>
-                    <WillWipeDisk>true</WillWipeDisk>
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
 
-                    <!-- Required partitions -->
-                    <CreatePartitions>
+      <SetupUILanguage>
+        <UILanguage>es-ES</UILanguage>
+      </SetupUILanguage>
+      <UILanguage>es-ES</UILanguage>
+      <UserLocale>es-ES</UserLocale>
+      <SystemLocale>es-ES</SystemLocale>
+      <InputLocale>es-ES</InputLocale>
 
-                        <!-- EFI -->
-                        <CreatePartition wcm:action="add">
-                            <Order>1</Order>
-                            <Type>EFI</Type>
-                            <Size>100</Size>
-                        </CreatePartition>
+    </component>
 
-                        <!-- MSR -->
-                        <CreatePartition wcm:action="add">
-                            <Order>2</Order>
-                            <Type>MSR</Type>
-                            <Size>16</Size>
-                        </CreatePartition>
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
 
-                        <!-- Windows -->
-                        <CreatePartition wcm:action="add">
-                            <Order>3</Order>
-                            <Type>Primary</Type>
-                            <Extend>true</Extend>
-                        </CreatePartition>
+      <!-- Particionado UEFI en disco 0 -->
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
 
-                    </CreatePartitions>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>100</Size>
+            </CreatePartition>
 
-                    <ModifyPartitions>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
 
-                        <!-- EFI -->
-                        <ModifyPartition wcm:action="add">
-                            <Order>1</Order>
-                            <PartitionID>1</PartitionID>
-                            <Format>FAT32</Format>
-                            <Label>System</Label>
-                        </ModifyPartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
 
-                        <!-- Windows -->
-                        <ModifyPartition wcm:action="add">
-                            <Order>2</Order>
-                            <PartitionID>3</PartitionID>
-                            <Format>NTFS</Format>
-                            <Label>Windows</Label>
-                            <Letter>C</Letter>
-                        </ModifyPartition>
+          <ModifyPartitions>
 
-                    </ModifyPartitions>
-                </DiskConfiguration>
+            <ModifyPartition wcm:action="add">
+              <PartitionID>1</PartitionID>
+              <Order>1</Order>
+              <Label>System</Label>
+              <Format>FAT32</Format>
+            </ModifyPartition>
 
-                <!-- Install index -->
-                <ImageInstall>
-                    <OSImage>
-                        <InstallFrom>
-                            <MetaData wcm:action="add">
-                                <Key>/IMAGE/INDEX</Key>
-                                <Value>4</Value>
-                            </MetaData>
-                        </InstallFrom>
-                        <InstallTo>
-                            <DiskID>0</DiskID>
-                            <PartitionID>3</PartitionID>
-                        </InstallTo>
-                        <WillShowUI>Never</WillShowUI>
-                    </OSImage>
-                </ImageInstall>
+            <ModifyPartition wcm:action="add">
+              <PartitionID>3</PartitionID>
+              <Order>2</Order>
+              <Label>Windows</Label>
+              <Format>NTFS</Format>
+              <Letter>C</Letter>
+            </ModifyPartition>
 
-                <UserData>
-                    <AcceptEula>true</AcceptEula>
-                    <FullName>Administrator</FullName>
-                    <Organization>Company</Organization>
-                </UserData>
+          </ModifyPartitions>
 
-        </component>
-    </settings>
+        </Disk>
+      </DiskConfiguration>
 
-    <!-- ============================= -->
-    <!-- PASS 2: specialize            -->
-    <!-- ============================= -->
-    <settings pass="specialize">
+      <!-- Instalar imagen -->
+      <ImageInstall>
+        <OSImage>
 
-        <!-- Hostname -->
-        <component name="Microsoft-Windows-Shell-Setup"
-                   processorArchitecture="amd64"
-                   publicKeyToken="31bf3856ad364e35"
-                   language="neutral"
-                   versionScope="nonSxS">
-            <ComputerName>{{ vm_name }}</ComputerName>
-        </component>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
 
-        <!-- STATIC IP -->
-        <component name="Microsoft-Windows-TCPIP"
-                   processorArchitecture="amd64"
-                   publicKeyToken="31bf3856ad364e35"
-                   language="neutral"
-                   versionScope="nonSxS">
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>{{ vm_image_index }}</Value>
+            </MetaData>
+          </InstallFrom>
 
-            <Interfaces>
-                <Interface wcm:action="add">
+          <WillShowUI>OnError</WillShowUI>
 
-                    <Identifier>Ethernet</Identifier>
+        </OSImage>
+      </ImageInstall>
 
-                    <Ipv4Settings>
-                        <DhcpEnabled>false</DhcpEnabled>
-                    </Ipv4Settings>
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>Administrador</FullName>
+        <Organization>Empresa</Organization>
+      </UserData>
 
-                    <!-- IP Address (without prefix) -->
-                    <UnicastIpAddresses>
-                        <IpAddress wcm:action="add" wcm:keyValue="1">
-                            {{ vm_ip }}
-                        </IpAddress>
-                    </UnicastIpAddresses>
+    </component>
+  </settings>
 
-                    <!-- Subnet mask -->
-                    <SubnetMask>{{ vm_mask }}</SubnetMask>
+  <!-- ============================================================ -->
+  <!-- 2. SPECIALIZE: Hostname + IP estática + DNS                  -->
+  <!-- ============================================================ -->
+  <settings pass="specialize">
 
-                    <!-- Gateway -->
-                    <Routes>
-                        <Route wcm:action="add">
-                            <Identifier>1</Identifier>
-                            <Prefix>0.0.0.0/0</Prefix>
-                            <NextHopAddress>{{ vm_gateway }}</NextHopAddress>
-                        </Route>
-                    </Routes>
+    <!-- Nombre del equipo -->
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <ComputerName>{{ vm_name }}</ComputerName>
+    </component>
 
-                </Interface>
-            </Interfaces>
-        </component>
+    <!-- IP Estática en 'Ethernet' -->
+    <component name="Microsoft-Windows-TCPIP"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
 
-        <!-- DNS -->
-        <component name="Microsoft-Windows-DNS-Client"
-                   processorArchitecture="amd64"
-                   publicKeyToken="31bf3856ad364e35"
-                   language="neutral"
-                   versionScope="nonSxS">
+      <Interfaces>
+        <Interface wcm:action="add">
 
-            <Interfaces>
-                <Interface wcm:action="add">
-                    <Identifier>Ethernet</Identifier>
-                    <DNSServerSearchOrder>
-                        <IpAddress wcm:action="add" wcm:keyValue="1">{{ vm_dns1 }}</IpAddress>
-                        <IpAddress wcm:action="add" wcm:keyValue="2">{{ vm_dns2 }}</IpAddress>
-                    </DNSServerSearchOrder>
-                </Interface>
-            </Interfaces>
+          <!-- 1. IPv4 -->
+          <Ipv4Settings>
+            <DhcpEnabled>false</DhcpEnabled>
+          </Ipv4Settings>
 
-        </component>
+          <!-- 2. IPv6 (lo declaramos para no invalidar el nodo) -->
+          <Ipv6Settings>
+            <DhcpEnabled>false</DhcpEnabled>
+          </Ipv6Settings>
 
-    </settings>
+          <!-- 3. NIC -->
+          <Identifier>Ethernet</Identifier>
 
-    <!-- ============================= -->
-    <!-- PASS 3: oobeSystem + autologin -->
-    <!-- ============================= -->
-    <settings pass="oobeSystem">
-        <component name="Microsoft-Windows-Shell-Setup"
-                   processorArchitecture="amd64"
-                   publicKeyToken="31bf3856ad364e35"
-                   language="neutral"
-                   versionScope="nonSxS">
+          <!-- 4. Dirección IP estática -->
+          <UnicastIpAddresses>
+              <IpAddress wcm:action="add" wcm:keyValue="1">
+                  {{ vm_ip }}
+              </IpAddress>
+          </UnicastIpAddresses>
+         
+          <!-- Subnet mask -->
+          <SubnetMask>{{ vm_mask }}</SubnetMask>
 
-            <!-- Local admin -->
-            <UserAccounts>
-                <AdministratorPassword>
-                    <Value>{{ admin_password }}</Value>
-                    <PlainText>true</PlainText>
-                </AdministratorPassword>
-            </UserAccounts>
+          <!-- 5. Gateway por defecto -->
+          <Routes>
+            <Route wcm:action="add">
+              <Identifier>1</Identifier>
+              <Prefix>0.0.0.0/0</Prefix>
+              <NextHopAddress>{{ vm_gateway }}</NextHopAddress>
+            </Route>
+          </Routes>
 
-            <!-- Auto-login  -->
-            <AutoLogon>
-                <Username>Administrator</Username>
-                <Password>
-                    <Value>{{ admin_password }}</Value>
-                    <PlainText>true</PlainText>
-                </Password>
-                <Enabled>true</Enabled>
-                <LogonCount>1</LogonCount>
-            </AutoLogon>
+        </Interface>
+      </Interfaces>
 
-            <OOBE>
-                <HideEULAPage>true</HideEULAPage>
-                <SkipUserOOBE>true</SkipUserOOBE>
-                <SkipMachineOOBE>true</SkipMachineOOBE>
-            </OOBE>
+    </component>
 
-        </component>
-    </settings>
+    <!-- DNS -->
+    <component name="Microsoft-Windows-DNS-Client"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <Interfaces>
+        <Interface wcm:action="add">
+
+          <Identifier>Ethernet</Identifier>
+
+          <DNSServerSearchOrder>
+            <IpAddress wcm:action="add" wcm:keyValue="1">{{ vm_dns1 }}</IpAddress>
+            <IpAddress wcm:action="add" wcm:keyValue="2">{{ vm_dns2 }}</IpAddress>
+          </DNSServerSearchOrder>
+
+        </Interface>
+      </Interfaces>
+
+    </component>
+
+  </settings>
+
+  <!-- ============================================================ -->
+  <!-- 3. OOBE SYSTEM: Password + Autologon de Administrator        -->
+  <!-- ============================================================ -->
+  <settings pass="oobeSystem">
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <!-- Autologon UNA vez con Administrator -->
+      <AutoLogon>
+        <Username>Administrator</Username>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Password>
+          <Value>{{ admin_password }}</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+
+      <!-- Password de Administrator -->
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>{{ admin_password }}</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+
+    </component>
+
+  </settings>
 
 </unattend>
