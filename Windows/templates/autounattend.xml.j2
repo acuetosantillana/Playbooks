@@ -103,25 +103,6 @@
       <TimeZone>Central Standard Time (Mexico)</TimeZone>
     </component>
 
-    <!-- Configurar red con PowerShell (sin netsh) -->
-    <component name="Microsoft-Windows-Deployment"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-      <RunSynchronous>
-
-        <RunSynchronousCommand wcm:action="add">
-          <Order>1</Order>
-          <Description>Configurar red IPv4 estática</Description>
-          <Path>
-            powershell -ExecutionPolicy Bypass -Command "$iface = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1; New-NetIPAddress -InterfaceIndex $iface.ifIndex -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_mask }} -DefaultGateway '{{ vm_gateway }}'; Set-DnsClientServerAddress -InterfaceIndex $iface.ifIndex -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}'"
-          </Path>
-        </RunSynchronousCommand>
-
-      </RunSynchronous>
-    </component>
-
   </settings>
 
   <!-- ====================== oobeSystem ====================== -->
