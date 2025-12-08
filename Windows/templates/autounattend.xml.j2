@@ -3,6 +3,7 @@
           xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
 
+  <!-- ====================== windowsPE ====================== -->
   <settings pass="windowsPE">
 
     <component name="Microsoft-Windows-International-Core-WinPE"
@@ -89,10 +90,10 @@
     </component>
   </settings>
 
-  ---
-
+  <!-- ====================== specialize ====================== -->
   <settings pass="specialize">
 
+    <!-- Nombre de equipo y zona horaria -->
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
@@ -102,45 +103,47 @@
       <TimeZone>Central Standard Time (Mexico)</TimeZone>
     </component>
 
-    <component name="Microsoft-Windows-TCPIP"
+    <!-- FORZAR IP / MÁSCARA / GATEWAY / DNS CON NETSH -->
+    <component name="Microsoft-Windows-Deployment"
                processorArchitecture="amd64"
                publicKeyToken="31bf3856ad364e35"
                language="neutral"
                versionScope="nonSxS">
-      <Interfaces>
-        <Interface wcm:action="add">
-          <Ipv4Settings>
-            <DhcpEnabled>false</DhcpEnabled>
-            <DefaultGateway wcm:action="add" wcm:keyValue="1">10.138.120.1</DefaultGateway>
-          </Ipv4Settings>
-          <Ipv6Settings>
-            <DhcpEnabled>false</DhcpEnabled>
-          </Ipv6Settings>
-          <Identifier>1</Identifier>
-        </Interface>
-      </Interfaces>
-    </component>
+      <RunSynchronous>
 
-    <component name="Microsoft-Windows-DNS-Client"
-               processorArchitecture="amd64"
-               publicKeyToken="31bf3856ad364e35"
-               language="neutral"
-               versionScope="nonSxS">
-      <Interfaces>
-        <Interface wcm:action="add">
-          <Identifier>1</Identifier>
-          <DNSServerSearchOrder>
-            <IpAddress wcm:action="add" wcm:keyValue="1">{{ vm_dns1 }}</IpAddress>
-            <IpAddress wcm:action="add" wcm:keyValue="2">{{ vm_dns2 }}</IpAddress>
-          </DNSServerSearchOrder>
-        </Interface>
-      </Interfaces>
+        <!-- IP estática + máscara + gateway (+ métrica 1) -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Configurar IP estática</Description>
+          <Path>
+            cmd /c netsh interface ipv4 set address name="Ethernet" static address={{ vm_ip }} mask={{ vm_mask }} gateway={{ vm_gateway }} gwmetric=1
+          </Path>
+        </RunSynchronousCommand>
+
+        <!-- DNS primario -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Description>Configurar DNS primario</Description>
+          <Path>
+            cmd /c netsh interface ipv4 set dnsservers name="Ethernet" static {{ vm_dns1 }} primary
+          </Path>
+        </RunSynchronousCommand>
+
+        <!-- DNS secundario -->
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Description>Configurar DNS secundario</Description>
+          <Path>
+            cmd /c netsh interface ipv4 add dnsservers name="Ethernet" {{ vm_dns2 }} index=2
+          </Path>
+        </RunSynchronousCommand>
+
+      </RunSynchronous>
     </component>
 
   </settings>
 
-  ---
-
+  <!-- ====================== oobeSystem ====================== -->
   <settings pass="oobeSystem">
 
     <component name="Microsoft-Windows-Shell-Setup"
