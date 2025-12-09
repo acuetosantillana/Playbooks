@@ -377,3 +377,4 @@
           IsoPath: "{{ iso_path_eff }}"
           UnattendIsoPath: "{{ unattended_iso_path }}"
           CandidateDrives: "{{ candidate_drives }}"
+          VlanId: "{{ vm_vlan | default(omit) | int }}"
