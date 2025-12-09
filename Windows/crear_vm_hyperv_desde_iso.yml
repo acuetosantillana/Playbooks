@@ -251,12 +251,32 @@
             Write-Host "VM ya existía: $VmName"
           }
 
-          # 4.1 VLAN condicional: si se envía vm_vlan, se aplica; si no, untagged
+          # 4.1 VLAN condicional: esperar a que exista el adaptador y aplicar
           if ($VlanId -gt 0) {
-            Write-Host "Aplicando VLAN $VlanId en la VM $VmName"
-            Set-VMNetworkAdapterVlan -VMName $VmName -Access -VlanId $VlanId -ErrorAction Stop
+            Write-Host "Se solicitó VLAN $VlanId. Buscando adaptador de red de la VM $VmName..."
+
+            $nic = $null
+            for ($i = 1; $i -le 10; $i++) {
+              $nic = Get-VMNetworkAdapter -VMName $VmName -ErrorAction SilentlyContinue
+              if ($nic) { break }
+              Start-Sleep -Seconds 1
+            }
+
+            if (-not $nic) {
+              throw "No se encontró adaptador de red en la VM $VmName después de esperar."
+            }
+
+            Write-Host "Adaptador encontrado: $($nic.Name). Aplicando VLAN $VlanId."
+            Set-VMNetworkAdapterVlan `
+              -VMName $VmName `
+              -VMNetworkAdapterName $nic.Name `
+              -Access `
+              -VlanId $VlanId `
+              -ErrorAction Stop
+
+            Write-Host "VLAN $VlanId aplicada correctamente."
           } else {
-            Write-Host "No se envió vm_vlan, dejando la VM sin VLAN (untagged)"
+            Write-Host "No se envió vm_vlan, dejando la VM sin VLAN (untagged)."
             Set-VMNetworkAdapterVlan -VMName $VmName -Untagged -ErrorAction SilentlyContinue
           }
 
@@ -317,7 +337,7 @@
                                         -ControllerLocation 1 `
                                         -Path $UnattendIsoPath
 
-          # 10. Forzar arranque UEFI desde la ISO SIN pedir "Press any key"
+          # 10. Forzar arranque UEFI desde la ISO SIN pedir "Press any key" a nivel firmware
           $dvd = Get-VMDvdDrive -VMName $VmName | Where-Object { $_.Path -eq $IsoPath }
 
           Set-VMFirmware -VMName $VmName `
