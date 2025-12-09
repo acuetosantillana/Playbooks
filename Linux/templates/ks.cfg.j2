@@ -1,1 +1,72 @@
+#version=RHEL9
+install
+cdrom
+
+lang {{ lang }}
+keyboard us
+
+# --------------------------------------------------------------------
+# Calcular netmask (acepta '24' o '255.255.255.0')
+# --------------------------------------------------------------------
+{% set cidr = (vm_mask | string) %}
+{% set netmask_map = {
+  '8':'255.0.0.0',
+  '16':'255.255.0.0',
+  '24':'255.255.255.0',
+  '25':'255.255.255.128',
+  '26':'255.255.255.192',
+  '27':'255.255.255.224',
+  '28':'255.255.255.240',
+  '29':'255.255.255.248',
+  '30':'255.255.255.252'
+} %}
+{% set netmask = netmask_map.get(cidr, vm_mask) %}
+
+# Red principal (primer NIC), IP fija
+network --bootproto=static \
+        --ip={{ vm_ip }} \
+        --netmask={{ netmask }} \
+        --gateway={{ vm_gateway }} \
+        --nameserver={{ vm_dns1 }} \
+        --activate
+
+timezone {{ timezone }} --utc
+
+rootpw --plaintext {{ root_password }}
+
+# Seguridad básica
+selinux --enforcing
+firewall --enabled --service=ssh
+
+services --enabled="sshd"
+
+bootloader --location=mbr --boot-drive=sda
+
+zerombr
+clearpart --all --initlabel
+autopart --type=lvm
+
+reboot
+
+# Usuario adicional
+user --name={{ linux_user }} --password={{ linux_password }} --plaintext --groups=wheel
+
+# --------------------------------------------------------------------
+# Paquetes
+# --------------------------------------------------------------------
+%packages
+@^minimal-environment
+vim
+curl
+wget
+net-tools
+bash-completion
+%end
+
+# --------------------------------------------------------------------
+# Post-install
+# --------------------------------------------------------------------
+%post
+echo "Instalación automática Rocky Linux 9.6 OK" > /root/instalacion_ok.txt
+%end
 
