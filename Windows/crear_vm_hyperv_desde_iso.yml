@@ -194,7 +194,8 @@
             [string]$SwitchName,
             [string]$IsoPath,
             [string]$UnattendIsoPath,
-            [string[]]$CandidateDrives
+            [string[]]$CandidateDrives,
+            [int]$VlanId 
           )
 
           Import-Module Hyper-V
@@ -248,6 +249,14 @@
             Write-Host "VM creada: $VmName"
           } else {
             Write-Host "VM ya existía: $VmName"
+          }
+
+          # 4.1 Configurar VLAN SOLO si se pasó VlanId
+          if ($PSBoundParameters.ContainsKey('VlanId') -and $VlanId -gt 0) {
+            Write-Host "Configurando VLAN $VlanId en la VM $VmName"
+            Set-VMNetworkAdapterVlan -VMName $VmName -Access -VlanId $VlanId -ErrorAction Stop
+          } else {
+            Write-Host "Sin VLAN configurada (no se pasó vm_vlan o es 0)"
           }
 
           # 5. Asegurar VHD en SCSI 0:2
