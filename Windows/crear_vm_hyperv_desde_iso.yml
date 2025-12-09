@@ -195,7 +195,7 @@
             [string]$IsoPath,
             [string]$UnattendIsoPath,
             [string[]]$CandidateDrives,
-            [int]$VlanId 
+            [int]$VlanId = 0
           )
 
           Import-Module Hyper-V
@@ -251,12 +251,13 @@
             Write-Host "VM ya existía: $VmName"
           }
 
-          # 4.1 Configurar VLAN SOLO si se pasó VlanId
-          if ($PSBoundParameters.ContainsKey('VlanId') -and $VlanId -gt 0) {
-            Write-Host "Configurando VLAN $VlanId en la VM $VmName"
+          # 4.1 VLAN condicional: si se envía vm_vlan, se aplica; si no, untagged
+          if ($VlanId -gt 0) {
+            Write-Host "Aplicando VLAN $VlanId en la VM $VmName"
             Set-VMNetworkAdapterVlan -VMName $VmName -Access -VlanId $VlanId -ErrorAction Stop
           } else {
-            Write-Host "Sin VLAN configurada (no se pasó vm_vlan o es 0)"
+            Write-Host "No se envió vm_vlan, dejando la VM sin VLAN (untagged)"
+            Set-VMNetworkAdapterVlan -VMName $VmName -Untagged -ErrorAction SilentlyContinue
           }
 
           # 5. Asegurar VHD en SCSI 0:2
@@ -316,48 +317,14 @@
                                         -ControllerLocation 1 `
                                         -Path $UnattendIsoPath
 
-          # 10. Orden de arranque: DVD Windows primero, luego disco
-          $fw        = Get-VMFirmware -VMName $VmName
-          $bootOrder = $fw.BootOrder
-
-          Write-Host "BootOrder ORIGINAL:"
-          $bootOrder | ForEach-Object {
-            " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
-          } | Out-String | Write-Host
-
-          # Clasificar entradas según tipo/nombre
-          $dvdEntries = $bootOrder | Where-Object {
-            $_.FirmwareDeviceName -like "*DVD*" -or $_.FirmwareDeviceName -like "*CD*"
-          }
-
-          $driveEntries = $bootOrder | Where-Object {
-            $_.BootType -eq "Drive" -and ($dvdEntries -notcontains $_)
-          }
-
-          $fileEntries = $bootOrder | Where-Object {
-            $_.BootType -eq "File"
-          }
-
-          $networkEntries = $bootOrder | Where-Object {
-            $_.BootType -eq "Network"
-          }
-
-          # Nuevo orden: DVD(s) -> Drive(s) -> File -> Network
-          $desiredOrder = @()
-          $desiredOrder += $dvdEntries
-          $desiredOrder += $driveEntries
-          $desiredOrder += $fileEntries
-          $desiredOrder += $networkEntries
+          # 10. Forzar arranque UEFI desde la ISO SIN pedir "Press any key"
+          $dvd = Get-VMDvdDrive -VMName $VmName | Where-Object { $_.Path -eq $IsoPath }
 
           Set-VMFirmware -VMName $VmName `
-            -EnableSecureBoot Off `
-            -BootOrder $desiredOrder
+            -EnableSecureBoot On `
+            -FirstBootDevice $dvd
 
-          Write-Host "BootOrder NUEVO:"
-          (Get-VMFirmware -VMName $VmName).BootOrder |
-            ForEach-Object {
-              " - $($_.FirmwareDeviceName) (BootType=$($_.BootType))"
-            } | Out-String | Write-Host
+          Write-Host "Boot UEFI forzado desde DVD principal."
 
           # 11. Iniciar VM
           $vm = Get-VM -Name $VmName
@@ -377,4 +344,4 @@
           IsoPath: "{{ iso_path_eff }}"
           UnattendIsoPath: "{{ unattended_iso_path }}"
           CandidateDrives: "{{ candidate_drives }}"
-          VlanId: "{{ vm_vlan | default(omit) | int }}"
+          VlanId: "{{ vm_vlan | default('0') | int }}"
