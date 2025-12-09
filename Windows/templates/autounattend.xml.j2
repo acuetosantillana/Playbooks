@@ -140,9 +140,7 @@
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
           <Description>Configurar red IPv4 estática</Description>
-          <CommandLine>
-            powershell.exe -ExecutionPolicy Bypass -Command "New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_mask }} -DefaultGateway '{{ vm_gateway }}' -AddressFamily IPv4 -ErrorAction SilentlyContinue; Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}'" *> C:\netcfg.log
-          </CommandLine>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "try { New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_mask }} -DefaultGateway '{{ vm_gateway }}' -AddressFamily IPv4 -ErrorAction Stop; Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}' -ErrorAction Stop; 'OK' | Out-File -FilePath 'C:\netcfg.log' -Encoding utf8 } catch { $_.Exception.Message | Out-File -FilePath 'C:\netcfg.log' -Encoding utf8 }"</CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
 
