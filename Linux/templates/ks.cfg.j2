@@ -23,12 +23,7 @@ keyboard us
 {% set netmask = netmask_map.get(cidr, vm_mask) %}
 
 # Red principal (primer NIC), IP fija
-network --bootproto=static \
-        --ip={{ vm_ip }} \
-        --netmask={{ netmask }} \
-        --gateway={{ vm_gateway }} \
-        --nameserver={{ vm_dns1 }} \
-        --activate
+network --bootproto=static --ip={{ vm_ip }} --netmask={{ netmask }} --gateway={{ vm_gateway }} --nameserver={{ vm_dns1 }} --device=link --activate
 
 timezone {{ timezone }} --utc
 
@@ -40,7 +35,7 @@ firewall --enabled --service=ssh
 
 services --enabled="sshd"
 
-bootloader --location=mbr --boot-drive=sda
+bootloader --location=mbr
 
 zerombr
 clearpart --all --initlabel
@@ -55,7 +50,7 @@ user --name={{ linux_user }} --password={{ linux_password }} --plaintext --group
 # Paquetes
 # --------------------------------------------------------------------
 %packages
-@^minimal-environment
+@core
 vim
 curl
 wget
@@ -69,4 +64,3 @@ bash-completion
 %post
 echo "Instalación automática Rocky Linux 9.6 OK" > /root/instalacion_ok.txt
 %end
-
