@@ -10,11 +10,19 @@ lang en_US.UTF-8
 keyboard es
 
 # ---------------------------------------------------------------
-# Red estática
+# Red estática con soporte DNS1 + DNS2
 # ---------------------------------------------------------------
+{% if vm_dns2 %}
 network --bootproto=static --ip={{ vm_ip }} --netmask={{ vm_mask }} \
-        --gateway={{ vm_gateway }} --nameserver={{ vm_dns1 }} \
+        --gateway={{ vm_gateway }} \
+        --nameserver={{ vm_dns1 }},{{ vm_dns2 }} \
         --device=link --activate
+{% else %}
+network --bootproto=static --ip={{ vm_ip }} --netmask={{ vm_mask }} \
+        --gateway={{ vm_gateway }} \
+        --nameserver={{ vm_dns1 }} \
+        --device=link --activate
+{% endif %}
 
 # Zona horaria
 timezone America/Mexico_City --utc
