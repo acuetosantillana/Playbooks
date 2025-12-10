@@ -3,11 +3,9 @@
 
 cdrom
 
-# Idioma: English
+# Idioma y teclado English
 lang en_US.UTF-8
-
-# Teclado Español
-keyboard es
+keyboard us
 
 # ---------------------------------------------------------------
 # Red estática con soporte DNS1 + DNS2
@@ -24,9 +22,10 @@ network --bootproto=static --ip={{ vm_ip }} --netmask={{ vm_mask }} \
         --device=link --activate
 {% endif %}
 
-# Zona horaria
+# Zona horaria México
 timezone America/Mexico_City --utc
 
+# Password de root
 rootpw --plaintext {{ root_password }}
 
 # Seguridad
@@ -46,19 +45,21 @@ part /boot/efi --fstype=efi --size=512 --ondisk=sda
 part /boot --fstype=xfs --size=1024 --ondisk=sda
 
 # PV para LVM (resto del disco)
+/* tamaño mínimo 1 MiB para permitir grow */
 part pv.01 --grow --size=1 --ondisk=sda
 
 volgroup vg_system pv.01
 
-# /
+# LV raíz 20 GiB
 logvol / --vgname=vg_system --size=20480 --name=lv_root --fstype=xfs
 
-# /home
+# LV home 50 GiB
 logvol /home --vgname=vg_system --size=51200 --name=lv_home --fstype=xfs
 
 # swap recomendado
 logvol swap --vgname=vg_system --recommended --name=lv_swap
 
+# El resto del espacio queda libre en el VG
 reboot
 
 # ---------------------------------------------------------------
@@ -67,15 +68,19 @@ reboot
 user --name={{ linux_user }} --password={{ linux_password }} --plaintext --groups=wheel
 
 # ---------------------------------------------------------------
-# Paquetes mínimos (sin GUI)
+# Paquetes mínimos + dev tools + NFS client + podman
 # ---------------------------------------------------------------
 %packages
 @core
+@development
 vim
 curl
 wget
 net-tools
 bash-completion
+nfs-utils
+git
+podman
 %end
 
 # ---------------------------------------------------------------
