@@ -1,7 +1,6 @@
 ---
 - name: Crear VM Rocky Linux 9.6 en Hyper-V (ISO Rocky + Kickstart OEMDRV)
-  # Cambia "all" por SMXFCHVB o por tu grupo de Hyper-V si quieres fijarlo
-  hosts: all
+  hosts: "{{ hyperv_host }}"
   gather_facts: no
 
   collections:
