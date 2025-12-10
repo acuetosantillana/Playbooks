@@ -1,55 +1,66 @@
 #version=RHEL9
-# Kickstart para Rocky Linux 9.6 en Hyper-V (UEFI + GPT)
+# Kickstart para Rocky Linux 9.6 (Server + GPT + LVM manual)
 
 cdrom
 
-lang {{ lang }}
-keyboard us
+# Idioma: English
+lang en_US.UTF-8
 
-# --------------------------------------------------------------------
-# Calcular netmask (acepta '24' o '255.255.255.0')
-# --------------------------------------------------------------------
-{% set cidr = (vm_mask | string) %}
-{% set netmask_map = {
-  '8':'255.0.0.0',
-  '16':'255.255.0.0',
-  '24':'255.255.255.0',
-  '25':'255.255.255.128',
-  '26':'255.255.255.192',
-  '27':'255.255.255.224',
-  '28':'255.255.255.240',
-  '29':'255.255.255.248',
-  '30':'255.255.255.252'
-} %}
-{% set netmask = netmask_map.get(cidr, vm_mask) %}
+# Teclado Español
+keyboard es
 
-# Red principal (primer NIC), IP fija
-network --bootproto=static --ip={{ vm_ip }} --netmask={{ netmask }} --gateway={{ vm_gateway }} --nameserver={{ vm_dns1 }} --device=link --activate
+# ---------------------------------------------------------------
+# Red estática
+# ---------------------------------------------------------------
+network --bootproto=static --ip={{ vm_ip }} --netmask={{ vm_mask }} \
+        --gateway={{ vm_gateway }} --nameserver={{ vm_dns1 }} \
+        --device=link --activate
 
-timezone {{ timezone }} --utc
+# Zona horaria
+timezone America/Mexico_City --utc
 
 rootpw --plaintext {{ root_password }}
 
-# Seguridad básica
-selinux --enforcing
+# Seguridad
+selinux --permissive
 firewall --enabled --service=ssh
-
 services --enabled="sshd"
 
-# --------------------------------------------------------------------
-# Particionado: GPT + LVM automático
-# --------------------------------------------------------------------
+# ---------------------------------------------------------------
+# Particionado GPT + LVM
+# ---------------------------------------------------------------
 clearpart --all --initlabel --disklabel=gpt
-autopart --type=lvm --fstype=xfs
+
+# EFI 512 MiB
+part /boot/efi --fstype=efi --size=512 --ondisk=sda
+
+# /boot 1 GiB
+part /boot --fstype=xfs --size=1024 --ondisk=sda
+
+# PV para LVM (resto del disco)
+part pv.01 --grow --size=1 --ondisk=sda
+
+volgroup vg_system pv.01
+
+# /
+logvol / --vgname=vg_system --size=20480 --name=lv_root --fstype=xfs
+
+# /home
+logvol /home --vgname=vg_system --size=51200 --name=lv_home --fstype=xfs
+
+# swap recomendado
+logvol swap --vgname=vg_system --recommended --name=lv_swap
 
 reboot
 
+# ---------------------------------------------------------------
 # Usuario adicional
+# ---------------------------------------------------------------
 user --name={{ linux_user }} --password={{ linux_password }} --plaintext --groups=wheel
 
-# --------------------------------------------------------------------
-# Paquetes
-# --------------------------------------------------------------------
+# ---------------------------------------------------------------
+# Paquetes mínimos (sin GUI)
+# ---------------------------------------------------------------
 %packages
 @core
 vim
@@ -59,9 +70,9 @@ net-tools
 bash-completion
 %end
 
-# --------------------------------------------------------------------
+# ---------------------------------------------------------------
 # Post-install
-# --------------------------------------------------------------------
+# ---------------------------------------------------------------
 %post
-echo "Instalación automática Rocky Linux 9.6 OK" > /root/instalacion_ok.txt
+echo "Instalación automática Rocky 9.6 OK" > /root/post.log
 %end
