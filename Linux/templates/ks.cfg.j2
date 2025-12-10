@@ -8,19 +8,26 @@ lang en_US.UTF-8
 keyboard us
 
 # ---------------------------------------------------------------
-# Red estática con soporte DNS1 + DNS2
+# Calcular máscara si vm_mask viene como "24"
 # ---------------------------------------------------------------
-{% if vm_dns2 %}
-network --bootproto=static --ip={{ vm_ip }} --netmask={{ vm_mask }} \
-        --gateway={{ vm_gateway }} \
-        --nameserver={{ vm_dns1 }},{{ vm_dns2 }} \
-        --device=link --activate
-{% else %}
-network --bootproto=static --ip={{ vm_ip }} --netmask={{ vm_mask }} \
-        --gateway={{ vm_gateway }} \
-        --nameserver={{ vm_dns1 }} \
-        --device=link --activate
-{% endif %}
+{% set cidr = (vm_mask | string) %}
+{% set netmask_map = {
+  '8':'255.0.0.0',
+  '16':'255.255.0.0',
+  '24':'255.255.255.0',
+  '25':'255.255.255.128',
+  '26':'255.255.255.192',
+  '27':'255.255.255.224',
+  '28':'255.255.255.240',
+  '29':'255.255.255.248',
+  '30':'255.255.255.252'
+} %}
+{% set netmask = netmask_map.get(cidr, vm_mask) %}
+
+# ---------------------------------------------------------------
+# Red estática con DNS1 + DNS2
+# ---------------------------------------------------------------
+network --bootproto=static --ip={{ vm_ip }} --netmask={{ netmask }} --gateway={{ vm_gateway }} --nameserver={{ vm_dns1 }}{% if vm_dns2 %},{{ vm_dns2 }}{% endif %} --device=link --activate
 
 # Zona horaria México
 timezone America/Mexico_City --utc
@@ -45,21 +52,20 @@ part /boot/efi --fstype=efi --size=512 --ondisk=sda
 part /boot --fstype=xfs --size=1024 --ondisk=sda
 
 # PV para LVM (resto del disco)
-/* tamaño mínimo 1 MiB para permitir grow */
 part pv.01 --grow --size=1 --ondisk=sda
 
 volgroup vg_system pv.01
 
-# LV raíz 20 GiB
+# / 20 GiB
 logvol / --vgname=vg_system --size=20480 --name=lv_root --fstype=xfs
 
-# LV home 50 GiB
+# /home 50 GiB
 logvol /home --vgname=vg_system --size=51200 --name=lv_home --fstype=xfs
 
 # swap recomendado
 logvol swap --vgname=vg_system --recommended --name=lv_swap
 
-# El resto del espacio queda libre en el VG
+# El resto del espacio queda libre en vg_system
 reboot
 
 # ---------------------------------------------------------------
@@ -68,7 +74,7 @@ reboot
 user --name={{ linux_user }} --password={{ linux_password }} --plaintext --groups=wheel
 
 # ---------------------------------------------------------------
-# Paquetes mínimos + dev tools + NFS client + podman
+# Paquetes (server sin GUI + dev tools + NFS + contenedores)
 # ---------------------------------------------------------------
 %packages
 @core
@@ -80,6 +86,7 @@ net-tools
 bash-completion
 nfs-utils
 git
+podman
 %end
 
 # ---------------------------------------------------------------
