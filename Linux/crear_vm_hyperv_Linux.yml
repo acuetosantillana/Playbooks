@@ -352,8 +352,9 @@
                                    -ControllerLocation 1 `
                                    -Path $KsIsoPath
 
-          # 10. Forzar arranque UEFI desde la ISO de Rocky
-          #     y habilitar Secure Boot compatible con Linux
+          # 10. Forzar arranque UEFI desde la ISO de Rocky y habilitar Secure Boot compatible con Linux
+          $dvd = Get-VMDvdDrive -VMName $VmName | Where-Object { $_.Path -eq $IsoPath }
+          
           Set-VMFirmware -VMName $VmName `
             -EnableSecureBoot On `
             -SecureBootTemplate "MicrosoftUEFICertificateAuthority" `
