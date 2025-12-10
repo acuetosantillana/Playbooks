@@ -29,9 +29,6 @@ keyboard us
 # ---------------------------------------------------------------
 network --bootproto=static --ip={{ vm_ip }} --netmask={{ netmask }} --gateway={{ vm_gateway }} --nameserver={{ vm_dns1 }}{% if vm_dns2 %},{{ vm_dns2 }}{% endif %} --device=link --activate --hostname={{ vm_name }}
 
-# Hostname igual al nombre de la VM
-hostname {{ vm_name }}
-
 # Zona horaria México
 timezone America/Mexico_City --utc
 
