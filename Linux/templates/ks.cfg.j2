@@ -25,9 +25,16 @@ keyboard us
 {% set netmask = netmask_map.get(cidr, vm_mask) %}
 
 # ---------------------------------------------------------------
-# Red estática con DNS1 + DNS2
+# Red estática con DNS1 + DNS2 y hostname = nombre de la VM
 # ---------------------------------------------------------------
-network --bootproto=static --ip={{ vm_ip }} --netmask={{ netmask }} --gateway={{ vm_gateway }} --nameserver={{ vm_dns1 }}{% if vm_dns2 %},{{ vm_dns2 }}{% endif %} --device=link --activate --hostname={{ vm_name }}
+network --bootproto=static \
+        --ip={{ vm_ip }} \
+        --netmask={{ netmask }} \
+        --gateway={{ vm_gateway }} \
+        --nameserver={{ vm_dns1 }}{% if vm_dns2 %},{{ vm_dns2 }}{% endif %} \
+        --device=link \
+        --activate \
+        --hostname={{ vm_name }}
 
 # Zona horaria México
 timezone America/Mexico_City --utc
@@ -65,11 +72,10 @@ logvol /home --vgname=vg_system --size=51200 --name=lv_home --fstype=xfs
 # swap recomendado
 logvol swap --vgname=vg_system --recommended --name=lv_swap
 
-# El resto del espacio queda libre en vg_system
 reboot
 
 # ---------------------------------------------------------------
-# Usuario adicional
+# Usuario adicional (adm)
 # ---------------------------------------------------------------
 user --name={{ linux_user }} --password={{ linux_password }} --plaintext --groups=wheel
 
@@ -94,4 +100,16 @@ podman
 # ---------------------------------------------------------------
 %post
 echo "Instalación automática Rocky 9.6 OK" > /root/post.log
+
+# Habilitar SSH root login con contraseña
+sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+sed -i 's/^PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+systemctl enable sshd
+systemctl restart sshd
+
+echo "SSH root enabled" >> /root/post.log
 %end
