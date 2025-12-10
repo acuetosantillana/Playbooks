@@ -1,5 +1,5 @@
 #version=RHEL9
-# Kickstart para Rocky Linux 9.6 en Hyper-V
+# Kickstart para Rocky Linux 9.6 en Hyper-V (UEFI + GPT)
 
 cdrom
 
@@ -36,11 +36,11 @@ firewall --enabled --service=ssh
 
 services --enabled="sshd"
 
-bootloader --location=mbr
-
-zerombr
-clearpart --all --initlabel
-autopart --type=lvm
+# --------------------------------------------------------------------
+# Particionado: GPT + LVM automático
+# --------------------------------------------------------------------
+clearpart --all --initlabel --disklabel=gpt
+autopart --type=lvm --fstype=xfs
 
 reboot
 
