@@ -1,13 +1,14 @@
 ---
 - name: Crear VM Rocky Linux 9.6 en Hyper-V (ISO Rocky + Kickstart OEMDRV)
-  hosts: "{{ hyperv_host }}"
+  # Cambia "all" por SMXFCHVB o por tu grupo de Hyper-V si quieres fijarlo
+  hosts: all
   gather_facts: no
 
   collections:
     - ansible.windows
 
   vars:
-    # Hosts Hyper-V permitidos
+    # Hosts Hyper-V permitidos (nombres como en tu inventario)
     hyperv_hosts:
       - SMXHVCEDIS
       - SMXHVFCAWS19
@@ -23,7 +24,7 @@
       - 'D'
       - 'E'
 
-    # ISO por defecto en NAS (Rocky 9.6)
+    # ISO Rocky por defecto en NAS
     iso_path_default: '\\10.138.120.130\isos\Rocky-9.6-x86_64-dvd.iso'
 
     # NAS para el SMB Global Mapping
@@ -32,7 +33,7 @@
     nas_user: 'NASUSER_AQUI'
     nas_pass: 'NASPASS_AQUI'
 
-    # Ruta local de oscdimg (la misma que usas para Windows)
+    # Ruta local de oscdimg.exe en el host Hyper-V
     oscdimg_path: 'C:\\Oscdimg\\oscdimg.exe'
 
     # Parámetros de la instalación de Rocky
@@ -43,31 +44,29 @@
     lang: "es_MX.UTF-8"
 
   tasks:
-
     # -------------------------------------------------------------------
     # 0) Validaciones y normalización
     # -------------------------------------------------------------------
+    - name: Validar host Hyper-V permitido
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname in hyperv_hosts
+        fail_msg: "El host {{ inventory_hostname }} no está en la lista de hyperv_hosts permitidos."
+
     - name: Validar variables obligatorias
       ansible.builtin.assert:
         that:
-          - hyperv_host is defined
           - vm_name is defined
           - memory_gb is defined
           - cpu is defined
           - disk_gb is defined
           - vm_ip is defined
-          - vm_mask is defined        # Puede ser 24 o 255.255.255.0
+          - vm_mask is defined
           - vm_gateway is defined
           - vm_dns1 is defined
         fail_msg: >-
-          Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb,
+          Faltan variables: vm_name, memory_gb, cpu, disk_gb,
           vm_ip, vm_mask, vm_gateway, vm_dns1.
-
-    - name: Validar hyperv_host permitido
-      ansible.builtin.assert:
-        that:
-          - hyperv_host in hyperv_hosts
-        fail_msg: "El host {{ hyperv_host }} no está en la lista de hyperv_hosts permitidos."
 
     - name: Normalizar variables numéricas y rutas
       ansible.builtin.set_fact:
@@ -341,7 +340,7 @@
                                 -Confirm:$false
             }
 
-          # 9. Agregar DVD Rocky en SCSI 0:0 y OEMDRV (Kickstart) en 0:1
+          # 9. Agregar DVD de Rocky en SCSI 0:0 y Kickstart (OEMDRV) en 0:1
           $dvdMain = Add-VMDvdDrive -VMName $VmName `
                                     -ControllerNumber 0 `
                                     -ControllerLocation 0 `
@@ -352,15 +351,14 @@
                                    -ControllerLocation 1 `
                                    -Path $KsIsoPath
 
-          # 10. Forzar arranque UEFI desde la ISO de Rocky y habilitar Secure Boot compatible con Linux
+          # 10. Forzar arranque UEFI desde la ISO de Rocky, SecureBoot OFF
           $dvd = Get-VMDvdDrive -VMName $VmName | Where-Object { $_.Path -eq $IsoPath }
-          
-          Set-VMFirmware -VMName $VmName `
-            -EnableSecureBoot On `
-            -SecureBootTemplate "MicrosoftUEFICertificateAuthority" `
-            -FirstBootDevice $dvdMain
 
-          Write-Host "Boot UEFI forzado desde DVD principal de Rocky."
+          Set-VMFirmware -VMName $VmName `
+            -EnableSecureBoot Off `
+            -FirstBootDevice $dvd
+
+          Write-Host "Boot UEFI forzado desde DVD principal de Rocky (SecureBoot OFF)."
 
           # 11. Iniciar VM
           $vm = Get-VM -Name $VmName
