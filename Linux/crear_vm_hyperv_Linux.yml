@@ -1,6 +1,6 @@
 ---
 - name: Crear VM Rocky Linux 9.6 en Hyper-V (ISO Rocky + Kickstart OEMDRV)
-  hosts: "{{ hyperv_host }}"
+  hosts: localhost
   gather_facts: no
 
   collections:
