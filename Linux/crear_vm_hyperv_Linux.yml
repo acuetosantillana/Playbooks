@@ -85,61 +85,55 @@
     # 1) SMB Global Mapping hacia la NAS
     # -------------------------------------------------------------------
     - name: Crear SMB Global Mapping hacia la NAS para Hyper-V
-      ansible.windows.win_powershell:
-        script: |
-          param(
-            [string]$Server,
-            [string]$Share,
-            [string]$User,
-            [string]$Pass
-          )
-
-          $remotePath = "\\$Server\$Share"
-
-          $sec  = ConvertTo-SecureString $Pass -AsPlainText -Force
-          $cred = New-Object System.Management.Automation.PSCredential($User, $sec)
-
-          try {
+      ansible.windows.win_shell: |
+        $Server = "{{ nas_server }}"
+        $Share  = "{{ nas_share }}"
+        $User   = "{{ nas_user }}"
+        $Pass   = "{{ nas_pass }}"
+    
+        $remotePath = "\\$Server\$Share"
+        Write-Host "Intentando mapear $remotePath con el usuario $User"
+    
+        $sec  = ConvertTo-SecureString $Pass -AsPlainText -Force
+        $cred = New-Object System.Management.Automation.PSCredential($User, $sec)
+    
+        if (Get-Command -Name New-SmbGlobalMapping -ErrorAction SilentlyContinue) {
             $existing = Get-SmbGlobalMapping -RemotePath $remotePath -ErrorAction SilentlyContinue
             if ($existing) {
-              Write-Host "MAPPING-ALREADY: $remotePath"
+                Write-Host "MAPPING-ALREADY: $remotePath"
             } else {
-              try { net use $remotePath /delete /y | Out-Null } catch { }
-
-              New-SmbGlobalMapping `
-                -RemotePath $remotePath `
-                -Credential $cred `
-                -Persistent $true `
-                -ErrorAction Stop | Out-Null
-
-              Write-Host "MAPPING-OK: $remotePath"
+                try { net use $remotePath /delete /y | Out-Null } catch { }
+    
+                New-SmbGlobalMapping -RemotePath $remotePath -Credential $cred -Persistent $true -ErrorAction Stop
+                Write-Host "MAPPING-OK: $remotePath"
             }
-          } catch {
-            throw "Error al crear SmbGlobalMapping para $remotePath : $($_.Exception.Message)"
-          }
-        parameters:
-          Server: "{{ nas_server }}"
-          Share: "{{ nas_share }}"
-          User: "{{ nas_user }}"
-          Pass: "{{ nas_pass }}"
-
-    # -------------------------------------------------------------------
-    # 2) Preparar carpetas (ISOs y Kickstart)
-    # -------------------------------------------------------------------
-    - name: Crear carpeta local para ISOs
-      ansible.windows.win_file:
-        path: "C:\\ISOs"
-        state: directory
-
-    - name: Crear carpeta Kickstart para esta VM
-      ansible.windows.win_file:
-        path: "{{ ks_dir }}"
-        state: directory
-
-    - name: Generar ks.cfg (Kickstart) para Rocky Linux 9.6
-      ansible.builtin.template:
-        src: "templates/ks.cfg.j2"
-        dest: "{{ ks_cfg_path }}"
+        } else {
+            Write-Host "New-SmbGlobalMapping no existe, usando net use como fallback"
+            net use $remotePath /user:$User $Pass /persistent:no
+            Write-Host "NETUSE-OK: $remotePath"
+        }
+      register: smb_map_result
+    
+    - name: Mostrar salida del mapping (solo para debug)
+      ansible.builtin.debug:
+        var: smb_map_result.stdout
+        # -------------------------------------------------------------------
+        # 2) Preparar carpetas (ISOs y Kickstart)
+        # -------------------------------------------------------------------
+        - name: Crear carpeta local para ISOs
+          ansible.windows.win_file:
+            path: "C:\\ISOs"
+            state: directory
+    
+        - name: Crear carpeta Kickstart para esta VM
+          ansible.windows.win_file:
+            path: "{{ ks_dir }}"
+            state: directory
+    
+        - name: Generar ks.cfg (Kickstart) para Rocky Linux 9.6
+          ansible.builtin.template:
+            src: "templates/ks.cfg.j2"
+            dest: "{{ ks_cfg_path }}"
 
     # -------------------------------------------------------------------
     # 3) Crear ISO OEMDRV con ks.cfg usando oscdimg
