@@ -132,4 +132,83 @@
 
     # -------------------------------------------------------------------
     # 3) Crear ISO OEMDRV con Kickstart usando oscdimg
-    # ------------------------------------------------------------
+    # -------------------------------------------------------------------
+    - name: Crear ISO Kickstart (OEMDRV)
+      ansible.windows.win_powershell:
+        script: |
+          param($SourcePath, $IsoPath, $OscdimgPath)
+
+          if (-not (Test-Path $SourcePath)) { throw "No existe carpeta Kickstart: $SourcePath" }
+          if (-not (Test-Path $OscdimgPath)) { throw "No existe oscdimg: $OscdimgPath" }
+
+          if (Test-Path $IsoPath) { Remove-Item -Path $IsoPath -Force }
+
+          $args = @('-lOEMDRV','-n','-m',$SourcePath,$IsoPath)
+
+          $p = Start-Process -FilePath $OscdimgPath -ArgumentList $args -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "oscdimg falló con código $($p.ExitCode)" }
+
+          Write-Host "ISO creada: $IsoPath"
+        parameters:
+          SourcePath: "{{ ks_dir }}"
+          IsoPath: "{{ ks_iso_path }}"
+          OscdimgPath: "{{ oscdimg_path }}"
+
+    # -------------------------------------------------------------------
+    # 4) Crear VM, adjuntar ISOs y configurar firmware
+    # -------------------------------------------------------------------
+    - name: Crear VM Rocky Linux 9.6 en Hyper-V
+      ansible.windows.win_powershell:
+        script: |
+          param($VmName,$MemoryBytes,$DiskBytes,$CpuCount,$SwitchName,$IsoPath,$KsIsoPath,$CandidateDrives,$VlanId)
+
+          Import-Module Hyper-V
+
+          # Seleccionar unidad con más espacio
+          $drives = foreach ($d in $CandidateDrives) {
+            try { Get-PSDrive -Name $d -ErrorAction Stop } catch { $null }
+          }
+
+          $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
+          $root = $bestDrive.Root
+          $clusterRoot = "$root\$VmName"
+          $vhdRoot = Join-Path $clusterRoot "Virtual Hard Disks"
+
+          New-Item -ItemType Directory -Path $clusterRoot -Force | Out-Null
+          New-Item -ItemType Directory -Path $vhdRoot -Force | Out-Null
+
+          $VhdPath = Join-Path $vhdRoot "$VmName.vhdx"
+
+          if (-not (Test-Path $VhdPath)) {
+            New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
+          }
+
+          $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
+          if (-not $vm) {
+            New-VM -Name $VmName -MemoryStartupBytes $MemoryBytes -Generation 2 -SwitchName $SwitchName -Path $root -NoVHD | Out-Null
+          }
+
+          # Insertar discos
+          Add-VMHardDiskDrive -VMName $VmName -ControllerNumber 0 -ControllerLocation 2 -Path $VhdPath -ErrorAction SilentlyContinue
+
+          # Insertar DVD Rocky y OEMDRV
+          Get-VMDvdDrive -VMName $VmName | Remove-VMDvdDrive -VMName $VmName -Confirm:$false -ErrorAction SilentlyContinue
+
+          Add-VMDvdDrive -VMName $VmName -ControllerNumber 0 -ControllerLocation 0 -Path $IsoPath
+          Add-VMDvdDrive -VMName $VmName -ControllerNumber 0 -ControllerLocation 1 -Path $KsIsoPath
+
+          # Secure Boot OFF, boot desde DVD
+          $dvd = Get-VMDvdDrive -VMName $VmName | Where-Object { $_.Path -eq $IsoPath }
+          Set-VMFirmware -VMName $VmName -EnableSecureBoot Off -FirstBootDevice $dvd
+
+          Start-VM -Name $VmName
+        parameters:
+          VmName: "{{ vm_name }}"
+          MemoryBytes: "{{ memory_bytes }}"
+          DiskBytes: "{{ disk_bytes }}"
+          CpuCount: "{{ cpu_count }}"
+          SwitchName: "{{ v_switch_eff }}"
+          IsoPath: "{{ iso_path_eff }}"
+          KsIsoPath: "{{ ks_iso_path }}"
+          CandidateDrives: "{{ candidate_drives }}"
+          VlanId: "{{ vm_vlan | default('0') | int }}"
