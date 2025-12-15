@@ -82,44 +82,34 @@
     # -------------------------------------------------------------------
     # 1) SMB Global Mapping hacia la NAS
     # -------------------------------------------------------------------
+    - name: Verificar si SMB Global Mapping ya existe
+      ansible.windows.win_shell: |
+        $remotePath = "\\{{ nas_server }}\{{ nas_share }}"
+        $mapping = Get-SmbGlobalMapping -RemotePath $remotePath -ErrorAction SilentlyContinue
+        if ($mapping) {
+          Write-Output "EXISTS"
+        } else {
+          Write-Output "NOTFOUND"
+        }
+      register: smb_check
+      changed_when: false
+
     - name: Crear SMB Global Mapping hacia la NAS para Hyper-V
-      ansible.windows.win_powershell:
-        script: |
-          param(
-            [string]$Server,
-            [string]$Share,
-            [string]$User,
-            [string]$Pass
-          )
-
-          $remotePath = "\\$Server\$Share"
-
-          $sec  = ConvertTo-SecureString $Pass -AsPlainText -Force
-          $cred = New-Object System.Management.Automation.PSCredential($User, $sec)
-
-          try {
-            $existing = Get-SmbGlobalMapping -RemotePath $remotePath -ErrorAction SilentlyContinue
-            if ($existing) {
-              Write-Host "MAPPING-ALREADY: $remotePath"
-            } else {
-              try { net use $remotePath /delete /y | Out-Null } catch { }
-
-              New-SmbGlobalMapping `
-                -RemotePath $remotePath `
-                -Credential $cred `
-                -Persistent $true `
-                -ErrorAction Stop | Out-Null
-
-              Write-Host "MAPPING-OK: $remotePath"
-            }
-          } catch {
-            throw "Error al crear SmbGlobalMapping para $remotePath : $($_.Exception.Message)"
-          }
-        parameters:
-          Server: "{{ nas_server }}"
-          Share: "{{ nas_share }}"
-          User: "{{ nas_user }}"
-          Pass: "{{ nas_pass }}"
+      ansible.windows.win_shell: |
+        $remotePath = "\\{{ nas_server }}\{{ nas_share }}"
+        $secPass = ConvertTo-SecureString "{{ nas_pass }}" -AsPlainText -Force
+        $cred = New-Object System.Management.Automation.PSCredential("{{ nas_user }}", $secPass)
+        
+        # Intentar limpiar mapeos previos
+        try { 
+          net use $remotePath /delete /y 2>$null 
+        } catch { }
+        
+        # Crear el mapping
+        New-SmbGlobalMapping -RemotePath $remotePath -Credential $cred -Persistent $true -ErrorAction Stop
+        Write-Output "Mapping creado exitosamente"
+      when: smb_check.stdout.strip() == "NOTFOUND"
+      register: smb_result
 
     # -------------------------------------------------------------------
     # 2) Preparar carpetas (ISOs y Kickstart)
@@ -143,49 +133,32 @@
     # -------------------------------------------------------------------
     # 3) Crear ISO OEMDRV con ks.cfg usando oscdimg
     # -------------------------------------------------------------------
+    - name: Verificar existencia de oscdimg.exe
+      ansible.windows.win_stat:
+        path: "{{ oscdimg_path }}"
+      register: oscdimg_stat
+
+    - name: Fallar si oscdimg no existe
+      ansible.builtin.fail:
+        msg: "oscdimg.exe no encontrado en {{ oscdimg_path }}"
+      when: not oscdimg_stat.stat.exists
+
+    - name: Eliminar ISO Kickstart anterior si existe
+      ansible.windows.win_file:
+        path: "{{ ks_iso_path }}"
+        state: absent
+
     - name: Crear ISO Kickstart (OEMDRV) con oscdimg
-      ansible.windows.win_powershell:
-        script: |
-          param(
-            [string]$SourcePath,
-            [string]$IsoPath,
-            [string]$OscdimgPath
-          )
-
-          if (-not (Test-Path $SourcePath)) {
-            throw "La carpeta origen no existe: $SourcePath"
-          }
-
-          if (-not (Test-Path $OscdimgPath)) {
-            throw "No se encontró oscdimg.exe en: $OscdimgPath"
-          }
-
-          if (Test-Path $IsoPath) {
-            Remove-Item -Path $IsoPath -Force
-          }
-
-          # Creamos ISO de datos, etiqueta OEMDRV para que Anaconda detecte ks.cfg automáticamente
-          $args = @(
-            '-lOEMDRV',
-            '-n',
-            '-m',
-            $SourcePath,
-            $IsoPath
-          )
-
-          Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
-
-          $p = Start-Process -FilePath $OscdimgPath -ArgumentList $args -Wait -PassThru -NoNewWindow
-
-          if ($p.ExitCode -ne 0) {
-            throw "oscdimg terminó con código $($p.ExitCode)."
-          }
-
-          Write-Host "ISO Kickstart (OEMDRV) creada: $IsoPath"
-        parameters:
-          SourcePath: "{{ ks_dir }}"
-          IsoPath: "{{ ks_iso_path }}"
-          OscdimgPath: "{{ oscdimg_path }}"
+      ansible.windows.win_command: >
+        "{{ oscdimg_path }}"
+        -lOEMDRV
+        -n
+        -m
+        "{{ ks_dir }}"
+        "{{ ks_iso_path }}"
+      args:
+        creates: "{{ ks_iso_path }}"
+      register: oscdimg_result
 
     # -------------------------------------------------------------------
     # 4) Crear / ajustar VM, VHD, DVDs y firmware
