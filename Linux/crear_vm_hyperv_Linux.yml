@@ -7,7 +7,7 @@
     - ansible.windows
 
   vars:
-    # Hosts Hyper-V permitidos
+    # Hosts Hyper-V permitidos (nombres como en tu inventario)
     hyperv_hosts:
       - SMXHVCEDIS
       - SMXHVFCAWS19
@@ -32,10 +32,10 @@
     nas_user: 'NASUSER_AQUI'
     nas_pass: 'NASPASS_AQUI'
 
-    # Ruta local de oscdimg.exe
+    # Ruta local de oscdimg.exe en el host Hyper-V
     oscdimg_path: 'C:\\Oscdimg\\oscdimg.exe'
 
-    # Instalación Rocky Linux
+    # Parámetros de la instalación de Rocky
     root_password: "Passw0rd."
     linux_user: "adm"
     linux_password: "Passw0rd."
@@ -44,13 +44,13 @@
 
   tasks:
     # -------------------------------------------------------------------
-    # 0) Validaciones
+    # 0) Validaciones y normalización
     # -------------------------------------------------------------------
     - name: Validar host Hyper-V permitido
       ansible.builtin.assert:
         that:
           - inventory_hostname in hyperv_hosts
-        fail_msg: "El host {{ inventory_hostname }} no está permitido."
+        fail_msg: "El host {{ inventory_hostname }} no está en la lista de hyperv_hosts permitidos."
 
     - name: Validar variables obligatorias
       ansible.builtin.assert:
@@ -63,9 +63,11 @@
           - vm_mask is defined
           - vm_gateway is defined
           - vm_dns1 is defined
-        fail_msg: "Faltan variables obligatorias."
+        fail_msg: >-
+          Faltan variables: vm_name, memory_gb, cpu, disk_gb,
+          vm_ip, vm_mask, vm_gateway, vm_dns1.
 
-    - name: Normalizar variables
+    - name: Normalizar variables numéricas y rutas
       ansible.builtin.set_fact:
         v_switch_eff: "{{ v_switch | default(default_switch) }}"
         iso_path_eff: "{{ iso_path | default(iso_path_default) }}"
@@ -81,127 +83,290 @@
     # 1) SMB Global Mapping hacia la NAS
     # -------------------------------------------------------------------
     - name: Crear SMB Global Mapping hacia la NAS para Hyper-V
-      ansible.windows.win_shell: |
-        $Server = "{{ nas_server }}"
-        $Share  = "{{ nas_share }}"
-        $User   = "{{ nas_user }}"
-        $Pass   = "{{ nas_pass }}"
+      ansible.windows.win_powershell:
+        script: |
+          param(
+            [string]$Server,
+            [string]$Share,
+            [string]$User,
+            [string]$Pass
+          )
 
-        $remotePath = "\\$Server\$Share"
-        Write-Host "Intentando mapear $remotePath con $User"
+          $remotePath = "\\$Server\$Share"
 
-        $sec  = ConvertTo-SecureString $Pass -AsPlainText -Force
-        $cred = New-Object System.Management.Automation.PSCredential($User, $sec)
+          $sec  = ConvertTo-SecureString $Pass -AsPlainText -Force
+          $cred = New-Object System.Management.Automation.PSCredential($User, $sec)
 
-        if (Get-Command -Name New-SmbGlobalMapping -ErrorAction SilentlyContinue) {
+          try {
             $existing = Get-SmbGlobalMapping -RemotePath $remotePath -ErrorAction SilentlyContinue
-            if (-not $existing) {
-                try { net use $remotePath /delete /y | Out-Null } catch { }
-                New-SmbGlobalMapping -RemotePath $remotePath -Credential $cred -Persistent $true -ErrorAction Stop
-            }
-            Write-Host "MAPPING-OK: $remotePath"
-        }
-        else {
-            Write-Host "NEW-SMBGLOBALMAPPING NO DISPONIBLE: usando net use"
-            net use $remotePath /user:$User $Pass /persistent:no
-            Write-Host "NETUSE-OK: $remotePath"
-        }
-      register: smb_map_result
+            if ($existing) {
+              Write-Host "MAPPING-ALREADY: $remotePath"
+            } else {
+              try { net use $remotePath /delete /y | Out-Null } catch { }
 
-    - name: Mostrar salida del SMB Mapping
-      ansible.builtin.debug:
-        var: smb_map_result.stdout
+              New-SmbGlobalMapping `
+                -RemotePath $remotePath `
+                -Credential $cred `
+                -Persistent $true `
+                -ErrorAction Stop | Out-Null
+
+              Write-Host "MAPPING-OK: $remotePath"
+            }
+          } catch {
+            throw "Error al crear SmbGlobalMapping para $remotePath : $($_.Exception.Message)"
+          }
+        parameters:
+          Server: "{{ nas_server }}"
+          Share: "{{ nas_share }}"
+          User: "{{ nas_user }}"
+          Pass: "{{ nas_pass }}"
 
     # -------------------------------------------------------------------
-    # 2) Preparar carpetas e inyectar Kickstart
+    # 2) Preparar carpetas (ISOs y Kickstart)
     # -------------------------------------------------------------------
     - name: Crear carpeta local para ISOs
       ansible.windows.win_file:
         path: "C:\\ISOs"
         state: directory
 
-    - name: Crear carpeta Kickstart para la VM
+    - name: Crear carpeta Kickstart para esta VM
       ansible.windows.win_file:
         path: "{{ ks_dir }}"
         state: directory
 
-    - name: Generar archivo ks.cfg para Kickstart
-      ansible.builtin.template:
+    # ✅ CORREGIDO: Usar win_template en lugar de ansible.builtin.template
+    - name: Generar ks.cfg (Kickstart) para Rocky Linux 9.6
+      ansible.windows.win_template:
         src: "templates/ks.cfg.j2"
         dest: "{{ ks_cfg_path }}"
 
     # -------------------------------------------------------------------
-    # 3) Crear ISO OEMDRV con Kickstart usando oscdimg
+    # 3) Crear ISO OEMDRV con ks.cfg usando oscdimg
     # -------------------------------------------------------------------
-    - name: Crear ISO Kickstart (OEMDRV)
+    - name: Crear ISO Kickstart (OEMDRV) con oscdimg
       ansible.windows.win_powershell:
         script: |
-          param($SourcePath, $IsoPath, $OscdimgPath)
+          param(
+            [string]$SourcePath,
+            [string]$IsoPath,
+            [string]$OscdimgPath
+          )
 
-          if (-not (Test-Path $SourcePath)) { throw "No existe carpeta Kickstart: $SourcePath" }
-          if (-not (Test-Path $OscdimgPath)) { throw "No existe oscdimg: $OscdimgPath" }
+          if (-not (Test-Path $SourcePath)) {
+            throw "La carpeta origen no existe: $SourcePath"
+          }
 
-          if (Test-Path $IsoPath) { Remove-Item -Path $IsoPath -Force }
+          if (-not (Test-Path $OscdimgPath)) {
+            throw "No se encontró oscdimg.exe en: $OscdimgPath"
+          }
 
-          $args = @('-lOEMDRV','-n','-m',$SourcePath,$IsoPath)
+          if (Test-Path $IsoPath) {
+            Remove-Item -Path $IsoPath -Force
+          }
+
+          # Creamos ISO de datos, etiqueta OEMDRV para que Anaconda detecte ks.cfg automáticamente
+          $args = @(
+            '-lOEMDRV',
+            '-n',
+            '-m',
+            $SourcePath,
+            $IsoPath
+          )
+
+          Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
 
           $p = Start-Process -FilePath $OscdimgPath -ArgumentList $args -Wait -PassThru -NoNewWindow
-          if ($p.ExitCode -ne 0) { throw "oscdimg falló con código $($p.ExitCode)" }
 
-          Write-Host "ISO creada: $IsoPath"
+          if ($p.ExitCode -ne 0) {
+            throw "oscdimg terminó con código $($p.ExitCode)."
+          }
+
+          Write-Host "ISO Kickstart (OEMDRV) creada: $IsoPath"
         parameters:
           SourcePath: "{{ ks_dir }}"
           IsoPath: "{{ ks_iso_path }}"
           OscdimgPath: "{{ oscdimg_path }}"
 
     # -------------------------------------------------------------------
-    # 4) Crear VM, adjuntar ISOs y configurar firmware
+    # 4) Crear / ajustar VM, VHD, DVDs y firmware
     # -------------------------------------------------------------------
-    - name: Crear VM Rocky Linux 9.6 en Hyper-V
+    - name: Crear VM Rocky Linux 9.6 en Hyper-V con ISO en NAS + ISO Kickstart
       ansible.windows.win_powershell:
         script: |
-          param($VmName,$MemoryBytes,$DiskBytes,$CpuCount,$SwitchName,$IsoPath,$KsIsoPath,$CandidateDrives,$VlanId)
+          param(
+            [string]$VmName,
+            [Int64]$MemoryBytes,
+            [Int64]$DiskBytes,
+            [int]$CpuCount,
+            [string]$SwitchName,
+            [string]$IsoPath,
+            [string]$KsIsoPath,
+            [string[]]$CandidateDrives,
+            [int]$VlanId = 0
+          )
 
           Import-Module Hyper-V
 
-          # Seleccionar unidad con más espacio
+          # 1. Elegir unidad con más espacio (D/E)
           $drives = foreach ($d in $CandidateDrives) {
             try { Get-PSDrive -Name $d -ErrorAction Stop } catch { $null }
           }
-
+          if (-not $drives) {
+            throw "Ninguna de las unidades candidatas ($($CandidateDrives -join ', ')) existe en este host."
+          }
           $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
-          $root = $bestDrive.Root
-          $clusterRoot = "$root\$VmName"
-          $vhdRoot = Join-Path $clusterRoot "Virtual Hard Disks"
+          Write-Host "Usando unidad $($bestDrive.Name): $([math]::Round($bestDrive.Free/1GB,2)) GB libres"
 
-          New-Item -ItemType Directory -Path $clusterRoot -Force | Out-Null
-          New-Item -ItemType Directory -Path $vhdRoot -Force | Out-Null
+          $root          = $bestDrive.Root
+          $clusterRoot   = "$root\$VmName"
+          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
+          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"
 
+          foreach ($p in @($clusterRoot, $snapshotsRoot, $vhdRoot)) {
+            if (-not (Test-Path $p)) {
+              New-Item -ItemType Directory -Path $p -Force | Out-Null
+            }
+          }
+
+          $VmPath  = $root
           $VhdPath = Join-Path $vhdRoot "$VmName.vhdx"
 
+          # 2. Validar ISOs
+          if (-not (Test-Path $IsoPath)) {
+            throw "No se puede acceder a la ISO de Rocky: $IsoPath"
+          }
+          if (-not (Test-Path $KsIsoPath)) {
+            throw "No se puede acceder a la ISO Kickstart (OEMDRV): $KsIsoPath"
+          }
+
+          # 3. Crear VHDX si no existe
           if (-not (Test-Path $VhdPath)) {
             New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
+            Write-Host "VHD creado: $VhdPath"
+          } else {
+            Write-Host "VHD ya existía: $VhdPath"
           }
 
+          # 4. Crear VM SIN VHD (NoVHD) para controlar puertos
           $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
           if (-not $vm) {
-            New-VM -Name $VmName -MemoryStartupBytes $MemoryBytes -Generation 2 -SwitchName $SwitchName -Path $root -NoVHD | Out-Null
+            New-VM -Name $VmName `
+                   -MemoryStartupBytes $MemoryBytes `
+                   -Generation 2 `
+                   -SwitchName $SwitchName `
+                   -Path $VmPath `
+                   -NoVHD | Out-Null
+            $vm = Get-VM -Name $VmName
+            Write-Host "VM creada: $VmName"
+          } else {
+            Write-Host "VM ya existía: $VmName"
           }
 
-          # Insertar discos
-          Add-VMHardDiskDrive -VMName $VmName -ControllerNumber 0 -ControllerLocation 2 -Path $VhdPath -ErrorAction SilentlyContinue
+          # 4.1 VLAN (si se envía vm_vlan)
+          if ($VlanId -gt 0) {
+            Write-Host "Se solicitó VLAN $VlanId. Buscando adaptador de red de la VM $VmName..."
 
-          # Insertar DVD Rocky y OEMDRV
-          Get-VMDvdDrive -VMName $VmName | Remove-VMDvdDrive -VMName $VmName -Confirm:$false -ErrorAction SilentlyContinue
+            $nic = $null
+            for ($i = 1; $i -le 10; $i++) {
+              $nic = Get-VMNetworkAdapter -VMName $VmName -ErrorAction SilentlyContinue
+              if ($nic) { break }
+              Start-Sleep -Seconds 1
+            }
 
-          Add-VMDvdDrive -VMName $VmName -ControllerNumber 0 -ControllerLocation 0 -Path $IsoPath
-          Add-VMDvdDrive -VMName $VmName -ControllerNumber 0 -ControllerLocation 1 -Path $KsIsoPath
+            if (-not $nic) {
+              throw "No se encontró adaptador de red en la VM $VmName después de esperar."
+            }
 
-          # Secure Boot OFF, boot desde DVD
+            Write-Host "Adaptador encontrado: $($nic.Name). Aplicando VLAN $VlanId."
+            Set-VMNetworkAdapterVlan `
+              -VMName $VmName `
+              -VMNetworkAdapterName $nic.Name `
+              -Access `
+              -VlanId $VlanId `
+              -ErrorAction Stop
+
+            Write-Host "VLAN $VlanId aplicada correctamente."
+          } else {
+            Write-Host "Sin vm_vlan, se deja la VM untagged."
+            Set-VMNetworkAdapterVlan -VMName $VmName -Untagged -ErrorAction SilentlyContinue
+          }
+
+          # 5. Asegurar VHD en SCSI 0:2
+          $osDisk = Get-VMHardDiskDrive -VMName $VmName -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Path -eq $VhdPath }
+
+          if ($osDisk) {
+            if ($osDisk.ControllerNumber -ne 0 -or $osDisk.ControllerLocation -ne 2) {
+              Remove-VMHardDiskDrive -VMName $VmName `
+                                     -ControllerNumber $osDisk.ControllerNumber `
+                                     -ControllerLocation $osDisk.ControllerLocation
+              Add-VMHardDiskDrive -VMName $VmName `
+                                   -ControllerNumber 0 `
+                                   -ControllerLocation 2 `
+                                   -Path $VhdPath | Out-Null
+            }
+          } else {
+            Add-VMHardDiskDrive -VMName $VmName `
+                                 -ControllerNumber 0 `
+                                 -ControllerLocation 2 `
+                                 -Path $VhdPath | Out-Null
+          }
+
+          # 6. CPU y memoria dinámica
+          Set-VMProcessor -VMName $VmName -Count $CpuCount
+          Set-VMMemory -VMName $VmName `
+            -DynamicMemoryEnabled $true `
+            -MinimumBytes 1GB `
+            -MaximumBytes ($MemoryBytes * 2)
+
+          # 7. Apagar VM antes de tocar firmware/DVD
+          $vm = Get-VM -Name $VmName
+          if ($vm.State -ne 'Off') {
+            Stop-VM -Name $VmName -TurnOff -Force
+            do {
+              Start-Sleep -Seconds 1
+              $vm = Get-VM -Name $VmName
+            } while ($vm.State -ne 'Off')
+          }
+
+          # 8. Quitar todos los DVD drives
+          Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue |
+            ForEach-Object {
+              Remove-VMDvdDrive -VMName $VmName `
+                                -ControllerNumber $_.ControllerNumber `
+                                -ControllerLocation $_.ControllerLocation `
+                                -Confirm:$false
+            }
+
+          # 9. Agregar DVD de Rocky en SCSI 0:0 y Kickstart (OEMDRV) en 0:1
+          $dvdMain = Add-VMDvdDrive -VMName $VmName `
+                                    -ControllerNumber 0 `
+                                    -ControllerLocation 0 `
+                                    -Path $IsoPath
+
+          $dvdKs = Add-VMDvdDrive -VMName $VmName `
+                                   -ControllerNumber 0 `
+                                   -ControllerLocation 1 `
+                                   -Path $KsIsoPath
+
+          # 10. Forzar arranque UEFI desde la ISO de Rocky, SecureBoot OFF
           $dvd = Get-VMDvdDrive -VMName $VmName | Where-Object { $_.Path -eq $IsoPath }
-          Set-VMFirmware -VMName $VmName -EnableSecureBoot Off -FirstBootDevice $dvd
 
-          Start-VM -Name $VmName
+          Set-VMFirmware -VMName $VmName `
+            -EnableSecureBoot Off `
+            -FirstBootDevice $dvd
+
+          Write-Host "Boot UEFI forzado desde DVD principal de Rocky (SecureBoot OFF)."
+
+          # 11. Iniciar VM
+          $vm = Get-VM -Name $VmName
+          if ($vm.State -ne 'Running') {
+            Start-VM -Name $VmName | Out-Null
+            Write-Host "VM iniciada: $VmName"
+          } else {
+            Write-Host "VM ya estaba corriendo."
+          }
+
         parameters:
           VmName: "{{ vm_name }}"
           MemoryBytes: "{{ memory_bytes }}"
@@ -212,3 +377,26 @@
           KsIsoPath: "{{ ks_iso_path }}"
           CandidateDrives: "{{ candidate_drives }}"
           VlanId: "{{ vm_vlan | default('0') | int }}"
+
+    # -------------------------------------------------------------------
+    # 5) Mensaje final
+    # -------------------------------------------------------------------
+    - name: Resumen de la creación
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "VM creada exitosamente: {{ vm_name }}"
+          - "Host Hyper-V: {{ inventory_hostname }}"
+          - "Memoria: {{ memory_gb }} GB"
+          - "CPU: {{ cpu_count }} cores"
+          - "Disco: {{ disk_gb }} GB"
+          - "IP: {{ vm_ip }}/{{ vm_mask }}"
+          - "Gateway: {{ vm_gateway }}"
+          - "DNS: {{ vm_dns1 }}, {{ vm_dns2_eff }}"
+          - "vSwitch: {{ v_switch_eff }}"
+          - "ISO Rocky: {{ iso_path_eff }}"
+          - "ISO Kickstart: {{ ks_iso_path }}"
+          - "============================================"
+          - "La VM está arrancando con instalación automática"
+          - "La instalación de Rocky Linux tomará varios minutos"
+          - "============================================"
