@@ -12,12 +12,12 @@
                language="neutral"
                versionScope="nonSxS">
       <SetupUILanguage>
-        <UILanguage>es-ES</UILanguage>
+        <UILanguage>en-US</UILanguage>
       </SetupUILanguage>
-      <UILanguage>es-ES</UILanguage>
-      <SystemLocale>es-ES</SystemLocale>
-      <UserLocale>es-ES</UserLocale>
-      <InputLocale>es-ES</InputLocale>
+      <UILanguage>en-US</UILanguage>
+      <SystemLocale>es-MX</SystemLocale>
+      <UserLocale>es-MX</UserLocale>
+      <InputLocale>0480:0000080a</InputLocale>
     </component>
 
     <component name="Microsoft-Windows-Setup"
@@ -83,8 +83,8 @@
 
       <UserData>
         <AcceptEula>true</AcceptEula>
-        <FullName>Administrador</FullName>
-        <Organization>Empresa</Organization>
+        <FullName>Administrator</FullName>
+        <Organization>Company</Organization>
       </UserData>
 
     </component>
@@ -106,6 +106,17 @@
 
   <!-- ====================== oobeSystem ====================== -->
   <settings pass="oobeSystem">
+
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <SystemLocale>es-MX</SystemLocale>
+      <UserLocale>es-MX</UserLocale>
+      <UILanguage>en-US</UILanguage>
+      <InputLocale>0480:0000080a</InputLocale>
+    </component>
 
     <component name="Microsoft-Windows-Shell-Setup"
                processorArchitecture="amd64"
@@ -139,7 +150,7 @@
       <FirstLogonCommands>
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
-          <Description>Configurar red IPv4 estática</Description>
+          <Description>Configure static IPv4 network</Description>
           <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "try { New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_mask }} -DefaultGateway '{{ vm_gateway }}' -AddressFamily IPv4 -ErrorAction Stop; Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}' -ErrorAction Stop; 'OK' | Out-File -FilePath 'C:\netcfg.log' -Encoding utf8 } catch { $_.Exception.Message | Out-File -FilePath 'C:\netcfg.log' -Encoding utf8 }"</CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
