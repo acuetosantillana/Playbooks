@@ -15,8 +15,8 @@
       - SMXFCHVB
       - SMXHYPVA
 
-    # Contraseña de Administrador (se puede sobreescribir por extra_vars)
-    admin_password: "Passw0rd."
+    # Contraseña de Administrador: DEBE pasarse por extra_vars o vault
+    # NO definir aquí por seguridad
 
     # vSwitch por defecto
     default_switch: 'LAN-Prod'
@@ -57,9 +57,11 @@
           - vm_dns1 is defined
           - vm_image_index is defined
           - admin_password is defined
+          - admin_password | length > 0
         fail_msg: >-
-          Faltan variables: hyperv_host, vm_name, memory_gb, cpu, disk_gb,
+          Faltan variables obligatorias: hyperv_host, vm_name, memory_gb, cpu, disk_gb,
           vm_ip, vm_mask, vm_gateway, vm_dns1, vm_image_index, admin_password.
+          El admin_password debe pasarse por extra_vars o vault.
 
     - name: Validar hyperv_host permitido
       ansible.builtin.assert:
@@ -365,3 +367,31 @@
           UnattendIsoPath: "{{ unattended_iso_path }}"
           CandidateDrives: "{{ candidate_drives }}"
           VlanId: "{{ vm_vlan | default('0') | int }}"
+
+    # -------------------------------------------------------------------
+    # 5) Mensaje final de resumen
+    # -------------------------------------------------------------------
+    - name: Mostrar resumen de la VM creada
+      ansible.builtin.debug:
+        msg:
+          - "=========================================="
+          - "VM CREADA EXITOSAMENTE"
+          - "=========================================="
+          - "Nombre: {{ vm_name }}"
+          - "Host Hyper-V: {{ hyperv_host }}"
+          - "Memoria: {{ memory_gb }} GB"
+          - "CPUs: {{ cpu }}"
+          - "Disco: {{ disk_gb }} GB"
+          - "vSwitch: {{ v_switch_eff }}"
+          - "VLAN: {{ vm_vlan | default('Sin VLAN (untagged)') }}"
+          - "IP: {{ vm_ip }}"
+          - "Máscara: {{ vm_mask }}"
+          - "Gateway: {{ vm_gateway }}"
+          - "DNS1: {{ vm_dns1 }}"
+          - "DNS2: {{ vm_dns2_eff }}"
+          - "ISO Windows: {{ iso_path_eff }}"
+          - "Image Index: {{ vm_image_index }}"
+          - "=========================================="
+          - "La VM está iniciándose con instalación desatendida."
+          - "El proceso de instalación tomará varios minutos."
+          - "=========================================="
