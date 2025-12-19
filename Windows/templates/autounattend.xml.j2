@@ -102,6 +102,36 @@
       <TimeZone>Central Standard Time (Mexico)</TimeZone>
     </component>
 
+    <component name="Microsoft-Windows-TerminalServices-LocalSessionManager"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <fDenyTSConnections>false</fDenyTSConnections>
+    </component>
+
+    <component name="Microsoft-Windows-TerminalServices-RDP-WinStationExtensions"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <UserAuthentication>0</UserAuthentication>
+    </component>
+
+    <component name="Networking-MPSSVC-Svc"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <FirewallGroups>
+        <FirewallGroup wcm:action="add" wcm:keyValue="RemoteDesktop">
+          <Active>true</Active>
+          <Group>Remote Desktop</Group>
+          <Profile>all</Profile>
+        </FirewallGroup>
+      </FirewallGroups>
+    </component>
+
   </settings>
 
   <!-- ====================== oobeSystem ====================== -->
@@ -152,6 +182,21 @@
           <Order>1</Order>
           <Description>Configure static IPv4 network</Description>
           <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "try { New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_mask }} -DefaultGateway '{{ vm_gateway }}' -AddressFamily IPv4 -ErrorAction Stop; Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}' -ErrorAction Stop; 'OK' | Out-File -FilePath 'C:\netcfg.log' -Encoding utf8 } catch { $_.Exception.Message | Out-File -FilePath 'C:\netcfg.log' -Encoding utf8 }"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Description>Change RDP port to 4502</Description>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name PortNumber -Value 4502"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Description>Add firewall rule for RDP on port 4502</Description>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "New-NetFirewallRule -DisplayName 'Remote Desktop - Custom Port 4502' -Direction Inbound -Protocol TCP -LocalPort 4502 -Action Allow"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Description>Restart Terminal Services</Description>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "Restart-Service TermService -Force"</CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
 
