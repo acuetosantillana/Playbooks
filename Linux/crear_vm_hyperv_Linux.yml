@@ -285,12 +285,11 @@
                                  -Path $VhdPath | Out-Null
           }
 
-          # 6. CPU y memoria dinámica
+          # 6. CPU y memoria estática
           Set-VMProcessor -VMName $VmName -Count $CpuCount
           Set-VMMemory -VMName $VmName `
-            -DynamicMemoryEnabled $true `
-            -MinimumBytes 1GB `
-            -MaximumBytes ($MemoryBytes * 2)
+            -DynamicMemoryEnabled $false `
+            -StartupBytes $MemoryBytes
 
           # 7. Apagar VM antes de tocar firmware/DVD
           $vm = Get-VM -Name $VmName
@@ -360,7 +359,7 @@
           - "============================================"
           - "VM creada exitosamente: {{ vm_name }}"
           - "Host Hyper-V: {{ inventory_hostname }}"
-          - "Memoria: {{ memory_gb }} GB"
+          - "Memoria: {{ memory_gb }} GB (estática)"
           - "CPU: {{ cpu_count }} cores"
           - "Disco: {{ disk_gb }} GB"
           - "IP: {{ vm_ip }}/{{ vm_mask }}"
