@@ -1,8 +1,7 @@
 #version=RHEL9
-
 cdrom
 lang en_US.UTF-8
-keyboard us
+keyboard --vckeymap=us --xlayouts='us'
 
 {% set cidr = (vm_mask | string) %}
 {% set netmask_map = {
@@ -19,22 +18,20 @@ keyboard us
 {% set netmask = netmask_map.get(cidr, vm_mask) %}
 
 network --bootproto=static --ip={{ vm_ip }} --netmask={{ netmask }} --gateway={{ vm_gateway }} --nameserver={{ vm_dns1 }}{% if vm_dns2 %},{{ vm_dns2 }}{% endif %} --device=link --activate --hostname={{ vm_name }}
-
 timezone America/Mexico_City --utc
 rootpw --plaintext {{ root_password }}
-
 selinux --permissive
 firewall --enabled --service=ssh
 services --enabled=sshd
 
 clearpart --all --initlabel --disklabel=gpt
+bootloader --location=mbr --boot-drive=sda
 
 part /boot/efi --fstype=efi --size=512 --ondisk=sda
 part /boot --fstype=xfs --size=1024 --ondisk=sda
 part pv.01 --grow --size=1 --ondisk=sda
 
 volgroup vg_system pv.01
-
 logvol / --vgname=vg_system --size=20480 --name=lv_root --fstype=xfs
 logvol /home --vgname=vg_system --size=51200 --name=lv_home --fstype=xfs
 logvol swap --vgname=vg_system --recommended --name=lv_swap
@@ -54,16 +51,34 @@ bash-completion
 nfs-utils
 git
 podman
+dnf-utils
 %end
 
-%post
-sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-sed -i 's/^PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-
+%post --log=/root/ks-post.log
+# Configurar SSH
+sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 systemctl enable sshd
-systemctl restart sshd
 
-echo "KS aplicado correctamente" > /root/post.log
+# Instalar Docker
+echo "=== Instalando Docker - $(date) ===" >> /root/ks-post.log
+
+# Agregar repositorio de Docker
+dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo >> /root/ks-post.log 2>&1
+
+# Instalar Docker Engine
+dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >> /root/ks-post.log 2>&1
+
+# Habilitar e iniciar Docker
+systemctl enable docker >> /root/ks-post.log 2>&1
+
+# Agregar usuario al grupo docker
+usermod -aG docker {{ linux_user }}
+
+# Log de finalización
+echo "=== Kickstart aplicado correctamente ===" >> /root/ks-post.log
+echo "Fecha: $(date)" >> /root/ks-post.log
+echo "Hostname: {{ vm_name }}" >> /root/ks-post.log
+echo "IP: {{ vm_ip }}" >> /root/ks-post.log
+docker --version >> /root/ks-post.log 2>&1
 %end
