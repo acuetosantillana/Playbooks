@@ -1,8 +1,10 @@
 #version=RHEL9
+# Configuración de instalación
 cdrom
 lang en_US.UTF-8
 keyboard --vckeymap=us --xlayouts='us'
 
+# Manejo de Máscara de Red (Jinja2)
 {% set cidr = (vm_mask | string) %}
 {% set netmask_map = {
   '8':'255.0.0.0',
@@ -17,13 +19,17 @@ keyboard --vckeymap=us --xlayouts='us'
 } %}
 {% set netmask = netmask_map.get(cidr, vm_mask) %}
 
+# Configuración de Red
 network --bootproto=static --ip={{ vm_ip }} --netmask={{ netmask }} --gateway={{ vm_gateway }} --nameserver={{ vm_dns1 }}{% if vm_dns2 %},{{ vm_dns2 }}{% endif %} --device=link --activate --hostname={{ vm_name }}
+
+# Configuración Regional y Seguridad
 timezone America/Mexico_City --utc
 rootpw --plaintext {{ root_password }}
 selinux --permissive
 firewall --enabled --service=ssh
 services --enabled=sshd
 
+# Particionado de Disco
 clearpart --all --initlabel --disklabel=gpt
 bootloader --location=mbr --boot-drive=sda
 
@@ -36,8 +42,8 @@ logvol / --vgname=vg_system --size=20480 --name=lv_root --fstype=xfs
 logvol /home --vgname=vg_system --size=51200 --name=lv_home --fstype=xfs
 logvol swap --vgname=vg_system --recommended --name=lv_swap
 
+# Usuarios y Post-instalación
 reboot
-
 user --name={{ linux_user }} --password={{ linux_password }} --plaintext --groups=wheel
 
 %packages
@@ -50,35 +56,47 @@ net-tools
 bash-completion
 nfs-utils
 git
-podman
 dnf-utils
+# Excluimos podman para evitar conflictos con Docker Engine
+-podman
+-buildah
 %end
 
 %post --log=/root/ks-post.log
-# Configurar SSH
+echo "=== Iniciando Post-Configuración - $(date) ==="
+
+# 1. Asegurar configuración SSH
+echo "Configurando SSH..."
 sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 systemctl enable sshd
 
-# Instalar Docker
-echo "=== Instalando Docker - $(date) ===" >> /root/ks-post.log
-
-# Agregar repositorio de Docker
+# 2. Configuración de Repositorio Docker
+echo "Configurando repositorio de Docker..."
 dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo >> /root/ks-post.log 2>&1
 
-# Instalar Docker Engine
-dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >> /root/ks-post.log 2>&1
+# 3. Instalación de Docker Engine
+echo "Instalando paquetes de Docker..."
+dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin --nobest >> /root/ks-post.log 2>&1
 
-# Habilitar e iniciar Docker
+# 4. Habilitar y arrancar Docker
+echo "Habilitando servicio Docker..."
 systemctl enable docker >> /root/ks-post.log 2>&1
+systemctl start docker >> /root/ks-post.log 2>&1
 
-# Agregar usuario al grupo docker
-usermod -aG docker {{ linux_user }}
+# 5. Permisos de usuario
+echo "Configurando permisos para {{ linux_user }}..."
+if id "{{ linux_user }}" &>/dev/null; then
+    usermod -aG docker {{ linux_user }}
+else
+    echo "ERROR: El usuario {{ linux_user }} no existe todavía." >> /root/ks-post.log
+fi
 
-# Log de finalización
-echo "=== Kickstart aplicado correctamente ===" >> /root/ks-post.log
-echo "Fecha: $(date)" >> /root/ks-post.log
-echo "Hostname: {{ vm_name }}" >> /root/ks-post.log
-echo "IP: {{ vm_ip }}" >> /root/ks-post.log
+# 6. Verificación final
+echo "=== Resumen de Instalación ===" >> /root/ks-post.log
+echo "Hostname: $(hostname)" >> /root/ks-post.log
+echo "Docker Version:" >> /root/ks-post.log
 docker --version >> /root/ks-post.log 2>&1
+echo "=== Finalizado correctamente - $(date) ===" >> /root/ks-post.log
+
 %end
