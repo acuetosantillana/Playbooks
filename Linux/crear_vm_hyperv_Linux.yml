@@ -129,6 +129,14 @@
       ansible.windows.win_template:
         src: "templates/ks.cfg.j2"
         dest: "{{ ks_cfg_path }}"
+    
+    # Convertir CRLF a LF
+    - name: Convertir ks.cfg a formato Unix (LF)
+      ansible.windows.win_shell: |
+        $content = Get-Content -Path "{{ ks_cfg_path }}" -Raw
+        $content = $content -replace "`r`n", "`n"
+        [System.IO.File]::WriteAllText("{{ ks_cfg_path }}", $content, [System.Text.Encoding]::UTF8)
+      changed_when: false
 
     # -------------------------------------------------------------------
     # 3) Crear ISO OEMDRV con ks.cfg usando oscdimg
