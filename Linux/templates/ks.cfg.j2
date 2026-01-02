@@ -101,8 +101,8 @@ sed -i 's/^PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 
-# En %post (chroot): NO arrancar ni reiniciar servicios, solo habilitar
-systemctl enable sshd.service >> /root/ks-post.log 2>&1 || true
+systemctl enable sshd
+systemctl restart sshd
 
 # Repo Docker
 dnf -y install dnf-plugins-core >> /root/ks-post.log 2>&1 || true
