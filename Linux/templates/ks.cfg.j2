@@ -63,16 +63,32 @@ dnf-plugins-core
 -buildah
 %end
 
-%post --interpreter=/bin/bash --log=/root/ks-post.log
-set -euxo pipefail
+%post --log=/root/ks-post.log
+# Nota: %post a veces corre en /bin/sh; evitamos "pipefail" para no romper.
+set -eu
+(set -o pipefail) 2>/dev/null || true
 
 echo "=== Iniciando Post-Configuración - $(date) ==="
+echo "SHELL=${SHELL:-unknown}" || true
+readlink -f /proc/$$/exe || true
 
-# 1. Asegurar configuración SSH
+# 1. Configuración SSH SIN tocar /etc/ssh/sshd_config (Rocky/RHEL 9)
 echo "Configurando SSH..."
-sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-systemctl enable --now sshd
+mkdir -p /etc/ssh/sshd_config.d
+
+cat > /etc/ssh/sshd_config.d/99-kickstart.conf <<'EOF'
+PermitRootLogin yes
+PasswordAuthentication yes
+EOF
+
+systemctl enable --now sshd >> /root/ks-post.log 2>&1
+systemctl restart sshd >> /root/ks-post.log 2>&1 || true
+
+# Log de verificación SSH efectivo
+{
+  echo "=== SSHD efectivo (sshd -T) ==="
+  sshd -T | egrep 'permitrootlogin|passwordauthentication' || true
+} >> /root/ks-post.log 2>&1
 
 # 2. Configuración de Repositorio Docker
 echo "Configurando repositorio de Docker..."
@@ -88,8 +104,8 @@ systemctl enable --now docker >> /root/ks-post.log 2>&1
 
 # 5. Permisos de usuario
 echo "Configurando permisos para {{ linux_user }}..."
-if id "{{ linux_user }}" &>/dev/null; then
-    usermod -aG docker "{{ linux_user }}"
+if id "{{ linux_user }}" >/dev/null 2>&1; then
+    usermod -aG docker "{{ linux_user }}" >> /root/ks-post.log 2>&1
 else
     echo "ERROR: El usuario {{ linux_user }} no existe todavía." >> /root/ks-post.log
 fi
@@ -101,6 +117,6 @@ fi
   echo "Docker Version:"
   docker --version || true
   echo "=== Finalizado correctamente - $(date) ==="
-} >> /root/ks-post.log
+} >> /root/ks-post.log 2>&1
 
 %end
