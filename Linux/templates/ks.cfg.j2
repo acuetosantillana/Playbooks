@@ -57,19 +57,22 @@ bash-completion
 nfs-utils
 git
 dnf-utils
+dnf-plugins-core
 # Excluimos podman para evitar conflictos con Docker Engine
 -podman
 -buildah
 %end
 
-%post --log=/root/ks-post.log
+%post --interpreter=/bin/bash --log=/root/ks-post.log
+set -euxo pipefail
+
 echo "=== Iniciando Post-Configuración - $(date) ==="
 
 # 1. Asegurar configuración SSH
 echo "Configurando SSH..."
 sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-systemctl enable sshd
+systemctl enable --now sshd
 
 # 2. Configuración de Repositorio Docker
 echo "Configurando repositorio de Docker..."
@@ -81,22 +84,23 @@ dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker
 
 # 4. Habilitar y arrancar Docker
 echo "Habilitando servicio Docker..."
-systemctl enable docker >> /root/ks-post.log 2>&1
-systemctl start docker >> /root/ks-post.log 2>&1
+systemctl enable --now docker >> /root/ks-post.log 2>&1
 
 # 5. Permisos de usuario
 echo "Configurando permisos para {{ linux_user }}..."
 if id "{{ linux_user }}" &>/dev/null; then
-    usermod -aG docker {{ linux_user }}
+    usermod -aG docker "{{ linux_user }}"
 else
     echo "ERROR: El usuario {{ linux_user }} no existe todavía." >> /root/ks-post.log
 fi
 
 # 6. Verificación final
-echo "=== Resumen de Instalación ===" >> /root/ks-post.log
-echo "Hostname: $(hostname)" >> /root/ks-post.log
-echo "Docker Version:" >> /root/ks-post.log
-docker --version >> /root/ks-post.log 2>&1
-echo "=== Finalizado correctamente - $(date) ===" >> /root/ks-post.log
+{
+  echo "=== Resumen de Instalación ==="
+  echo "Hostname: $(hostname)"
+  echo "Docker Version:"
+  docker --version || true
+  echo "=== Finalizado correctamente - $(date) ==="
+} >> /root/ks-post.log
 
 %end
