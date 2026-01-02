@@ -94,14 +94,12 @@ echo "=== Inicio Post-Configuración: $(date) ==="
 # Asegurar sshd instalado
 dnf -y install openssh-server >> /root/ks-post.log 2>&1 || true
 
-# Configuración SSH
-if [ -f /etc/ssh/sshd_config ]; then
-  sed -ri 's/^[#[:space:]]*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-  grep -qE '^[#[:space:]]*PermitRootLogin' /etc/ssh/sshd_config || echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
+# Habilitar SSH root login con contraseña
+sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+sed -i 's/^PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 
-  sed -ri 's/^[#[:space:]]*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-  grep -qE '^[#[:space:]]*PasswordAuthentication' /etc/ssh/sshd_config || echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
-fi
+sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 
 # En %post (chroot): NO arrancar ni reiniciar servicios, solo habilitar
 systemctl enable sshd.service >> /root/ks-post.log 2>&1 || true
