@@ -44,27 +44,19 @@ services --enabled=sshd
 clearpart --all --initlabel --disklabel=gpt
 bootloader --location=mbr --boot-drive=sda
 
-# Particiones base
 # /boot/efi : 512 MB
 part /boot/efi --fstype=efi --size=512 --ondisk=sda
 
 # /boot : 1 GB
 part /boot --fstype=xfs --size=1024 --ondisk=sda
 
-# Volumen físico LVM (usa todo el disco restante)
+# Volumen físico LVM
 part pv.01 --grow --size=1 --ondisk=sda
 
-# Grupo de volúmenes
 volgroup vg_system pv.01
 
-# Volúmenes lógicos
-# /      : 20 GB
 logvol / --vgname=vg_system --name=lv_root --size=20480 --fstype=xfs
-
-# /home  : 50 GB
 logvol /home --vgname=vg_system --name=lv_home --size=51200 --fstype=xfs
-
-# swap   : tamaño recomendado por el sistema
 logvol swap --vgname=vg_system --name=lv_swap --recommended
 
 # ==================================================
@@ -88,7 +80,6 @@ nfs-utils
 git
 dnf-utils
 dnf-plugins-core
-# Excluimos podman y buildah para evitar conflictos con Docker Engine
 -podman
 -buildah
 %end
@@ -100,31 +91,39 @@ dnf-plugins-core
 
 echo "=== Inicio Post-Configuración: $(date) ==="
 
-# Configuración SSH (editando archivo original)
-sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-systemctl enable --now sshd
-systemctl restart sshd || true
+# Asegurar sshd instalado
+dnf -y install openssh-server >> /root/ks-post.log 2>&1 || true
 
-# Repositorio Docker
-dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo >> /root/ks-post.log 2>&1
+# Configuración SSH
+if [ -f /etc/ssh/sshd_config ]; then
+  sed -ri 's/^[#[:space:]]*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+  grep -qE '^[#[:space:]]*PermitRootLogin' /etc/ssh/sshd_config || echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
+
+  sed -ri 's/^[#[:space:]]*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+  grep -qE '^[#[:space:]]*PasswordAuthentication' /etc/ssh/sshd_config || echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
+fi
+
+# En %post (chroot): NO arrancar ni reiniciar servicios, solo habilitar
+systemctl enable sshd.service >> /root/ks-post.log 2>&1 || true
+
+# Repo Docker
+dnf -y install dnf-plugins-core >> /root/ks-post.log 2>&1 || true
+dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo >> /root/ks-post.log 2>&1 || true
 
 # Instalación Docker
-dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin --nobest >> /root/ks-post.log 2>&1
+dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin --nobest >> /root/ks-post.log 2>&1 || true
 
-# Habilitar Docker
-systemctl enable --now docker >> /root/ks-post.log 2>&1
+# Habilitar Docker (para primer arranque)
+systemctl enable docker.service >> /root/ks-post.log 2>&1 || true
 
 # Permisos de usuario
 if id "{{ linux_user }}" &>/dev/null; then
-    usermod -aG docker "{{ linux_user }}"
+  usermod -aG docker "{{ linux_user }}" >> /root/ks-post.log 2>&1 || true
 else
-    echo "ERROR: Usuario {{ linux_user }} no existe" >> /root/ks-post.log
+  echo "ERROR: Usuario {{ linux_user }} no existe" >> /root/ks-post.log
 fi
 
-# Verificación final
 echo "Hostname: $(hostname)" >> /root/ks-post.log
-docker --version >> /root/ks-post.log 2>&1 || true
 echo "=== Fin Post-Configuración: $(date) ===" >> /root/ks-post.log
 
 %end
