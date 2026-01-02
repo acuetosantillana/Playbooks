@@ -1,16 +1,25 @@
 #version=RHEL9
+# Versión del esquema Kickstart compatible con Red Hat Enterprise Linux 9
 
 # ==================================================
 # Configuración de instalación
 # ==================================================
 cdrom
+# Fuente de instalación: utiliza el medio local (ISO / CD / DVD)
+
 lang en_US.UTF-8
+# Idioma y codificación del sistema
+
 keyboard --vckeymap=latam --xlayouts='latam'
+# Configuración del teclado (Latinoamérica)
 
 # ==================================================
 # Manejo de Máscara de Red (Jinja2)
 # ==================================================
+# Se recibe la máscara en formato CIDR (ej. 24, 26, 27)
 {% set cidr = (vm_mask | string) %}
+
+# Mapeo CIDR → Netmask tradicional
 {% set netmask_map = {
   '8'  : '255.0.0.0',
   '16' : '255.255.0.0',
@@ -22,55 +31,84 @@ keyboard --vckeymap=latam --xlayouts='latam'
   '29' : '255.255.255.248',
   '30' : '255.255.255.252'
 } %}
+
+# Selecciona la netmask según el CIDR, o usa el valor original si no existe
 {% set netmask = netmask_map.get(cidr, vm_mask) %}
 
 # ==================================================
 # Configuración de Red
 # ==================================================
 network --bootproto=static --ip={{ vm_ip }} --netmask={{ netmask }} --gateway={{ vm_gateway }} --nameserver={{ vm_dns1 }}{% if vm_dns2 %},{{ vm_dns2 }}{% endif %} --device=link --activate --hostname={{ vm_name }}
+# Configuración de red estática: IP, netmask, gateway, DNS, interfaz activa y hostname
 
 # ==================================================
 # Configuración Regional y Seguridad
 # ==================================================
 timezone America/Mexico_City --utc
+# Zona horaria del sistema (hardware clock en UTC)
+
 rootpw --plaintext {{ root_password }}
+# Contraseña de root en texto plano (Anaconda la guarda cifrada en el sistema final)
+
 selinux --permissive
+# SELinux permisivo: registra eventos pero no bloquea
+
 firewall --enabled --service=ssh
+# Firewall habilitado permitiendo el servicio SSH
+
 services --enabled=sshd
+# Habilita sshd para iniciar al arrancar
 
 # ==================================================
-# Particionado de Disco
+# Particionado de Disco (sda)
 # ==================================================
+# Nota: Todos los tamaños de "part" y "logvol" en Kickstart están en MB.
 clearpart --all --initlabel --disklabel=gpt
-bootloader --location=mbr --boot-drive=sda
+# Borra particiones existentes y crea tabla GPT nueva en el disco
 
-# /boot/efi : 512 MB
+bootloader --location=mbr --boot-drive=sda
+# Instala el bootloader en el disco sda (según tu diseño actual)
+
+# /boot/efi (512 MB) - Partición EFI para arranque UEFI
 part /boot/efi --fstype=efi --size=512 --ondisk=sda
 
-# /boot : 1 GB
+# /boot (1024 MB = 1 GB) - Partición de arranque
 part /boot --fstype=xfs --size=1024 --ondisk=sda
 
-# Volumen físico LVM
+# pv.01 (resto del disco) - Volumen físico LVM usando todo el espacio restante
 part pv.01 --grow --size=1 --ondisk=sda
 
+# vg_system - Grupo de volúmenes LVM
 volgroup vg_system pv.01
 
+# lv_root (20480 MB = 20 GB) - Sistema raíz
 logvol / --vgname=vg_system --name=lv_root --size=20480 --fstype=xfs
+
+# lv_home (51200 MB = 50 GB) - Directorios de usuarios
 logvol /home --vgname=vg_system --name=lv_home --size=51200 --fstype=xfs
+
+# lv_swap (tamaño recomendado) - Swap según recomendación de Anaconda
 logvol swap --vgname=vg_system --name=lv_swap --recommended
 
 # ==================================================
 # Usuario
 # ==================================================
 reboot
+# Reinicia automáticamente al finalizar la instalación
+
 user --name={{ linux_user }} --password={{ linux_password }} --plaintext --groups=wheel
+# Crea usuario con privilegios de administración (wheel/sudo)
 
 # ==================================================
 # Paquetes
 # ==================================================
 %packages
 @core
+# Grupo base mínimo
+
 @development
+# Grupo de herramientas de desarrollo
+
 vim
 curl
 wget
@@ -80,6 +118,11 @@ nfs-utils
 git
 dnf-utils
 dnf-plugins-core
+# Paquetes utilitarios instalados
+
+# Paquetes EXCLUIDOS explícitamente (para evitar conflictos con Docker Engine):
+# - podman
+# - buildah
 -podman
 -buildah
 %end
@@ -88,40 +131,53 @@ dnf-plugins-core
 # Post-instalación
 # ==================================================
 %post --log=/root/ks-post.log
+# Script post-instalación dentro del sistema instalado (chroot). Log en /root/ks-post.log
 
 echo "=== Inicio Post-Configuración: $(date) ==="
 
-# Asegurar sshd instalado
-dnf -y install openssh-server >> /root/ks-post.log 2>&1 || true
+# --------------------------------------------------
+# SSH
+# --------------------------------------------------
 
-# Habilitar SSH root login con contraseña
 sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/^PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+# Fuerza PermitRootLogin=yes (si estaba comentado o ya existía)
 
 sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+# Fuerza PasswordAuthentication=yes (si estaba comentado o ya existía)
 
 systemctl enable sshd
+# Habilita sshd para que arranque en el primer boot
+
 systemctl restart sshd
+# Intenta reiniciar sshd (en chroot puede ser ignorado si systemd no está activo)
 
-# Repo Docker
+# --------------------------------------------------
+# Docker
+# --------------------------------------------------
 dnf -y install dnf-plugins-core >> /root/ks-post.log 2>&1 || true
+# Instala utilidades para manejar repositorios DNF
+
 dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo >> /root/ks-post.log 2>&1 || true
+# Agrega repositorio de Docker CE (paquetes compatibles)
 
-# Instalación Docker
 dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin --nobest >> /root/ks-post.log 2>&1 || true
+# Instala Docker Engine y componentes (con --nobest para evitar bloqueos por dependencias)
 
-# Habilitar Docker (para primer arranque)
 systemctl enable docker.service >> /root/ks-post.log 2>&1 || true
+# Habilita Docker para iniciar al arrancar el sistema
 
+# --------------------------------------------------
 # Permisos de usuario
-if id "{{ linux_user }}" &>/dev/null; then
-  usermod -aG docker "{{ linux_user }}" >> /root/ks-post.log 2>&1 || true
-else
-  echo "ERROR: Usuario {{ linux_user }} no existe" >> /root/ks-post.log
-fi
+# --------------------------------------------------
+if id "{{ linux_user }}" &>/dev/null; then usermod -aG docker "{{ linux_user }}" >> /root/ks-post.log 2>&1 || true; else echo "ERROR: Usuario {{ linux_user }} no existe" >> /root/ks-post.log; fi
+# Agrega el usuario al grupo docker si existe; si no, registra el error en el log
 
 echo "Hostname: $(hostname)" >> /root/ks-post.log
+# Registra el hostname final en el log
+
 echo "=== Fin Post-Configuración: $(date) ===" >> /root/ks-post.log
+# Marca fin del post
 
 %end
