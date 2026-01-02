@@ -96,7 +96,7 @@ logvol swap --vgname=vg_system --name=lv_swap --recommended
 reboot
 # Reinicia automáticamente al finalizar la instalación
 
-user --name={{ linux_user }} --password={{ linux_password }} --plaintext --groups=wheel
+user --name={{ linux_user }} --password={{ linux_password }} --plaintext
 # Crea usuario con privilegios de administración (wheel/sudo)
 
 # ==================================================
