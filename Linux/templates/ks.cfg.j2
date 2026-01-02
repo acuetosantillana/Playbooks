@@ -44,14 +44,28 @@ services --enabled=sshd
 clearpart --all --initlabel --disklabel=gpt
 bootloader --location=mbr --boot-drive=sda
 
-part /boot/efi --fstype=efi --size=512  --ondisk=sda
-part /boot     --fstype=xfs --size=1024 --ondisk=sda
-part pv.01     --grow --size=1          --ondisk=sda
+# Particiones base
+# /boot/efi : 512 MB
+part /boot/efi --fstype=efi --size=512 --ondisk=sda
 
+# /boot : 1 GB
+part /boot --fstype=xfs --size=1024 --ondisk=sda
+
+# Volumen físico LVM (usa todo el disco restante)
+part pv.01 --grow --size=1 --ondisk=sda
+
+# Grupo de volúmenes
 volgroup vg_system pv.01
-logvol /     --vgname=vg_system --name=lv_root --size=20480 --fstype=xfs
+
+# Volúmenes lógicos
+# /      : 20 GB
+logvol / --vgname=vg_system --name=lv_root --size=20480 --fstype=xfs
+
+# /home  : 50 GB
 logvol /home --vgname=vg_system --name=lv_home --size=51200 --fstype=xfs
-logvol swap  --vgname=vg_system --name=lv_swap --recommended
+
+# swap   : tamaño recomendado por el sistema
+logvol swap --vgname=vg_system --name=lv_swap --recommended
 
 # ==================================================
 # Usuario
@@ -82,32 +96,27 @@ dnf-plugins-core
 # ==================================================
 # Post-instalación
 # ==================================================
-%post --interpreter=/usr/bin/bash --log=/root/ks-post.log
-set -euxo pipefail
+%post --log=/root/ks-post.log
+set -eux
 
 echo "=== Inicio Post-Configuración: $(date) ==="
 
 # Configuración SSH (editando archivo original)
-echo "Configurando SSH..."
 sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
 systemctl enable --now sshd
 systemctl restart sshd || true
 
 # Repositorio Docker
-echo "Configurando repositorio Docker..."
 dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo >> /root/ks-post.log 2>&1
 
 # Instalación Docker
-echo "Instalando Docker..."
 dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin --nobest >> /root/ks-post.log 2>&1
 
 # Habilitar Docker
-echo "Habilitando Docker..."
 systemctl enable --now docker >> /root/ks-post.log 2>&1
 
 # Permisos de usuario
-echo "Asignando permisos Docker a {{ linux_user }}..."
 if id "{{ linux_user }}" &>/dev/null; then
     usermod -aG docker "{{ linux_user }}"
 else
@@ -115,9 +124,8 @@ else
 fi
 
 # Verificación final
-echo "=== Resumen ===" >> /root/ks-post.log
 echo "Hostname: $(hostname)" >> /root/ks-post.log
-echo "Docker: $(docker --version 2>/dev/null || echo 'no instalado')" >> /root/ks-post.log
+docker --version >> /root/ks-post.log 2>&1 || true
 echo "=== Fin Post-Configuración: $(date) ===" >> /root/ks-post.log
 
 %end
