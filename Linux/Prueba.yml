@@ -5,3 +5,4 @@
   tasks:
     - name: Hacer ping a los hosts
       ansible.builtin.ping:
+...
