@@ -22,6 +22,9 @@
     candidate_drives:
       - 'D'
       - 'E'
+      - 'G'
+      - 'H'
+      - 'j'
 
     # ISO Rocky por defecto en NAS
     iso_path_default: '\\10.138.120.130\isos\Rocky-9.6-x86_64-dvd.iso'
