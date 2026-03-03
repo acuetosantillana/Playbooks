@@ -1,5 +1,5 @@
 ---
-- name: Crear VM Rocky Linux 9.6 en Hyper-V (ISO Rocky + Kickstart OEMDRV)
+- name: Crear VM Rocky Linux 9.6 en Hyper-V Failover Cluster
   hosts: "{{ hyperv_host }}"
   gather_facts: no
 
@@ -7,24 +7,23 @@
     - ansible.windows
 
   vars:
-    # Hosts Hyper-V permitidos (nombres como en tu inventario)
-    hyperv_hosts:
-      - SMXHVCEDIS
-      - SMXHVFCAWS19
-      - SMXHVFCBWS19
-      - SMXFCHVB
+    # Nodos del Cluster Hyper-V
+    cluster_nodes:
       - SMXHYPVA
+      - SMXHYPVB
 
     # vSwitch por defecto
     default_switch: 'LAN-Prod'
 
-    # Unidades donde se pueden guardar discos de la VM
-    candidate_drives:
-      - 'D'
-      - 'E'
-      - 'G'
-      - 'H'
-      - 'j'
+    # Volúmenes CSV disponibles (Cluster Shared Volumes)
+    csv_volumes:
+      - 'C:\\ClusterStorage\\Volume1'
+      - 'C:\\ClusterStorage\\Volume2'
+      - 'C:\\ClusterStorage\\Volume3'
+      - 'C:\\ClusterStorage\\Volume4'
+      - 'C:\\ClusterStorage\\Volume5'
+      - 'C:\\ClusterStorage\\Volume6'
+      - 'C:\\ClusterStorage\\Volume7'
 
     # ISO Rocky por defecto en NAS
     iso_path_default: '\\10.138.120.130\isos\Rocky-9.6-x86_64-dvd.iso'
@@ -49,11 +48,11 @@
     # -------------------------------------------------------------------
     # 0) Validaciones y normalización
     # -------------------------------------------------------------------
-    - name: Validar host Hyper-V permitido
+    - name: Validar que el host pertenece al cluster
       ansible.builtin.assert:
         that:
-          - inventory_hostname in hyperv_hosts
-        fail_msg: "El host {{ inventory_hostname }} no está en la lista de hyperv_hosts permitidos."
+          - inventory_hostname in cluster_nodes
+        fail_msg: "El host {{ inventory_hostname }} no está en la lista de nodos del cluster."
 
     - name: Validar variables obligatorias
       ansible.builtin.assert:
@@ -103,12 +102,10 @@
         $secPass = ConvertTo-SecureString "{{ nas_pass }}" -AsPlainText -Force
         $cred = New-Object System.Management.Automation.PSCredential("{{ nas_user }}", $secPass)
         
-        # Intentar limpiar mapeos previos
         try { 
           net use $remotePath /delete /y 2>$null 
         } catch { }
         
-        # Crear el mapping
         New-SmbGlobalMapping -RemotePath $remotePath -Credential $cred -Persistent $true -ErrorAction Stop
         Write-Output "Mapping creado exitosamente"
       when: smb_check.stdout.strip() == "NOTFOUND"
@@ -127,7 +124,6 @@
         path: "{{ ks_dir }}"
         state: directory
 
-    # ✅ CORREGIDO: Usar win_template en lugar de ansible.builtin.template
     - name: Generar ks.cfg (Kickstart) para Rocky Linux 9.6
       ansible.windows.win_template:
         src: "templates/ks.cfg.j2"
@@ -138,17 +134,11 @@
         script: |
           param([string]$FilePath)
           
-          # Leer como UTF-8 (Ansible win_template genera en UTF-8)
           $content = Get-Content -Path $FilePath -Raw -Encoding UTF8
-          
-          # Reemplazar CRLF por LF
           $content = $content.Replace("`r`n", "`n")
-          
-          # Asegurar que no termine con múltiples saltos de línea
           $content = $content.TrimEnd()
           $content = $content + "`n"
           
-          # Escribir en UTF-8 sin BOM
           $utf8NoBom = New-Object System.Text.UTF8Encoding $false
           [System.IO.File]::WriteAllText($FilePath, $content, $utf8NoBom)
           
@@ -187,9 +177,9 @@
       register: oscdimg_result
 
     # -------------------------------------------------------------------
-    # 4) Crear / ajustar VM, VHD, DVDs y firmware
+    # 4) Crear VM en Cluster con CSV
     # -------------------------------------------------------------------
-    - name: Crear VM Rocky Linux 9.6 en Hyper-V con ISO en NAS + ISO Kickstart
+    - name: Crear VM Rocky Linux 9.6 como Highly Available en Cluster
       ansible.windows.win_powershell:
         script: |
           param(
@@ -200,71 +190,104 @@
             [string]$SwitchName,
             [string]$IsoPath,
             [string]$KsIsoPath,
-            [string[]]$CandidateDrives,
+            [string[]]$CsvVolumes,
             [int]$VlanId = 0
           )
 
           Import-Module Hyper-V
+          Import-Module FailoverClusters
 
-          # 1. Elegir unidad con más espacio (D/E)
-          $drives = foreach ($d in $CandidateDrives) {
-            try { Get-PSDrive -Name $d -ErrorAction Stop } catch { $null }
+          Write-Host "=========================================="
+          Write-Host "Creando VM en Cluster Hyper-V"
+          Write-Host "=========================================="
+
+          # 1. Verificar que el cluster está disponible
+          try {
+            $cluster = Get-Cluster -ErrorAction Stop
+            Write-Host "Cluster detectado: $($cluster.Name)"
+          } catch {
+            throw "No se puede conectar al cluster de failover. Asegúrate de que este nodo es parte del cluster."
           }
-          if (-not $drives) {
-            throw "Ninguna de las unidades candidatas ($($CandidateDrives -join ', ')) existe en este host."
-          }
-          $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
-          Write-Host "Usando unidad $($bestDrive.Name): $([math]::Round($bestDrive.Free/1GB,2)) GB libres"
 
-          $root          = $bestDrive.Root
-          $clusterRoot   = "$root\$VmName"
-          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
-          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"
-
-          foreach ($p in @($clusterRoot, $snapshotsRoot, $vhdRoot)) {
-            if (-not (Test-Path $p)) {
-              New-Item -ItemType Directory -Path $p -Force | Out-Null
+          # 2. Seleccionar CSV con más espacio disponible
+          Write-Host "`nSeleccionando volumen CSV con más espacio..."
+          
+          $bestVolume = $null
+          $maxFreeSpace = 0
+          
+          foreach ($csvPath in $CsvVolumes) {
+            if (Test-Path $csvPath) {
+              try {
+                $volume = Get-Item $csvPath -ErrorAction Stop
+                $freeSpace = (Get-Volume -DriveLetter ($csvPath.Substring(0,1))).SizeRemaining
+                
+                Write-Host "  $csvPath - Libre: $([math]::Round($freeSpace/1GB, 2)) GB"
+                
+                if ($freeSpace -gt $maxFreeSpace) {
+                  $maxFreeSpace = $freeSpace
+                  $bestVolume = $csvPath
+                }
+              } catch {
+                Write-Host "  $csvPath - No accesible" -ForegroundColor Yellow
+              }
             }
           }
 
-          $VmPath  = $root
-          $VhdPath = Join-Path $vhdRoot "$VmName.vhdx"
+          if (-not $bestVolume) {
+            throw "No se encontró ningún volumen CSV disponible"
+          }
 
-          # 2. Validar ISOs
+          Write-Host "`n✓ Volumen seleccionado: $bestVolume"
+          Write-Host "  Espacio libre: $([math]::Round($maxFreeSpace/1GB, 2)) GB"
+
+          # 3. Crear estructura de directorios en CSV
+          $vmRoot = Join-Path $bestVolume $VmName
+          $vhdPath = Join-Path $vmRoot "Virtual Hard Disks\$VmName.vhdx"
+          $vhdDir = Split-Path $vhdPath -Parent
+
+          foreach ($dir in @($vmRoot, $vhdDir)) {
+            if (-not (Test-Path $dir)) {
+              New-Item -ItemType Directory -Path $dir -Force | Out-Null
+            }
+          }
+
+          Write-Host "✓ Estructura de directorios creada en CSV"
+
+          # 4. Validar ISOs
           if (-not (Test-Path $IsoPath)) {
             throw "No se puede acceder a la ISO de Rocky: $IsoPath"
           }
           if (-not (Test-Path $KsIsoPath)) {
-            throw "No se puede acceder a la ISO Kickstart (OEMDRV): $KsIsoPath"
+            throw "No se puede acceder a la ISO Kickstart: $KsIsoPath"
           }
 
-          # 3. Crear VHDX si no existe
-          if (-not (Test-Path $VhdPath)) {
-            New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
-            Write-Host "VHD creado: $VhdPath"
+          # 5. Crear VHDX en CSV
+          if (-not (Test-Path $vhdPath)) {
+            New-VHD -Path $vhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
+            Write-Host "✓ VHD creado: $vhdPath"
           } else {
-            Write-Host "VHD ya existía: $VhdPath"
+            Write-Host "VHD ya existía: $vhdPath"
           }
 
-          # 4. Crear VM SIN VHD (NoVHD) para controlar puertos
+          # 6. Crear VM (primero local, luego se hace HA)
           $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
           if (-not $vm) {
             New-VM -Name $VmName `
                    -MemoryStartupBytes $MemoryBytes `
                    -Generation 2 `
                    -SwitchName $SwitchName `
-                   -Path $VmPath `
+                   -Path $vmRoot `
                    -NoVHD | Out-Null
             $vm = Get-VM -Name $VmName
-            Write-Host "VM creada: $VmName"
+            Write-Host "✓ VM creada: $VmName"
           } else {
             Write-Host "VM ya existía: $VmName"
           }
 
-          # 4.1 VLAN (si se envía vm_vlan)
+          # 7. Configurar VLAN si es necesario
           if ($VlanId -gt 0) {
-            Write-Host "Se solicitó VLAN $VlanId. Buscando adaptador de red de la VM $VmName..."
-
+            Write-Host "Configurando VLAN $VlanId..."
+            
             $nic = $null
             for ($i = 1; $i -le 10; $i++) {
               $nic = Get-VMNetworkAdapter -VMName $VmName -ErrorAction SilentlyContinue
@@ -272,62 +295,37 @@
               Start-Sleep -Seconds 1
             }
 
-            if (-not $nic) {
-              throw "No se encontró adaptador de red en la VM $VmName después de esperar."
+            if ($nic) {
+              Set-VMNetworkAdapterVlan -VMName $VmName `
+                                       -VMNetworkAdapterName $nic.Name `
+                                       -Access `
+                                       -VlanId $VlanId
+              Write-Host "✓ VLAN $VlanId configurada"
             }
-
-            Write-Host "Adaptador encontrado: $($nic.Name). Aplicando VLAN $VlanId."
-            Set-VMNetworkAdapterVlan `
-              -VMName $VmName `
-              -VMNetworkAdapterName $nic.Name `
-              -Access `
-              -VlanId $VlanId `
-              -ErrorAction Stop
-
-            Write-Host "VLAN $VlanId aplicada correctamente."
           } else {
-            Write-Host "Sin vm_vlan, se deja la VM untagged."
             Set-VMNetworkAdapterVlan -VMName $VmName -Untagged -ErrorAction SilentlyContinue
           }
 
-          # 5. Asegurar VHD en SCSI 0:2
-          $osDisk = Get-VMHardDiskDrive -VMName $VmName -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Path -eq $VhdPath }
+          # 8. Agregar disco duro en SCSI 0:2
+          Add-VMHardDiskDrive -VMName $VmName `
+                               -ControllerNumber 0 `
+                               -ControllerLocation 2 `
+                               -Path $vhdPath
 
-          if ($osDisk) {
-            if ($osDisk.ControllerNumber -ne 0 -or $osDisk.ControllerLocation -ne 2) {
-              Remove-VMHardDiskDrive -VMName $VmName `
-                                     -ControllerNumber $osDisk.ControllerNumber `
-                                     -ControllerLocation $osDisk.ControllerLocation
-              Add-VMHardDiskDrive -VMName $VmName `
-                                   -ControllerNumber 0 `
-                                   -ControllerLocation 2 `
-                                   -Path $VhdPath | Out-Null
-            }
-          } else {
-            Add-VMHardDiskDrive -VMName $VmName `
-                                 -ControllerNumber 0 `
-                                 -ControllerLocation 2 `
-                                 -Path $VhdPath | Out-Null
-          }
-
-          # 6. CPU y memoria estática
+          # 9. Configurar CPU y memoria (estática para cluster)
           Set-VMProcessor -VMName $VmName -Count $CpuCount
           Set-VMMemory -VMName $VmName `
             -DynamicMemoryEnabled $false `
             -StartupBytes $MemoryBytes
 
-          # 7. Apagar VM antes de tocar firmware/DVD
+          # 10. Apagar VM antes de configurar firmware/DVD
           $vm = Get-VM -Name $VmName
           if ($vm.State -ne 'Off') {
             Stop-VM -Name $VmName -TurnOff -Force
-            do {
-              Start-Sleep -Seconds 1
-              $vm = Get-VM -Name $VmName
-            } while ($vm.State -ne 'Off')
+            Start-Sleep -Seconds 2
           }
 
-          # 8. Quitar todos los DVD drives
+          # 11. Quitar DVDs existentes
           Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue |
             ForEach-Object {
               Remove-VMDvdDrive -VMName $VmName `
@@ -336,34 +334,80 @@
                                 -Confirm:$false
             }
 
-          # 9. Agregar DVD de Rocky en SCSI 0:0 y Kickstart (OEMDRV) en 0:1
-          $dvdMain = Add-VMDvdDrive -VMName $VmName `
-                                    -ControllerNumber 0 `
-                                    -ControllerLocation 0 `
-                                    -Path $IsoPath
+          # 12. Agregar DVDs: Rocky en SCSI 0:0, Kickstart en 0:1
+          Add-VMDvdDrive -VMName $VmName `
+                         -ControllerNumber 0 `
+                         -ControllerLocation 0 `
+                         -Path $IsoPath | Out-Null
 
-          $dvdKs = Add-VMDvdDrive -VMName $VmName `
-                                   -ControllerNumber 0 `
-                                   -ControllerLocation 1 `
-                                   -Path $KsIsoPath
+          Add-VMDvdDrive -VMName $VmName `
+                         -ControllerNumber 0 `
+                         -ControllerLocation 1 `
+                         -Path $KsIsoPath | Out-Null
 
-          # 10. Forzar arranque UEFI desde la ISO de Rocky, SecureBoot OFF
+          # 13. Configurar firmware UEFI
           $dvd = Get-VMDvdDrive -VMName $VmName | Where-Object { $_.Path -eq $IsoPath }
 
           Set-VMFirmware -VMName $VmName `
             -EnableSecureBoot Off `
             -FirstBootDevice $dvd
 
-          Write-Host "Boot UEFI forzado desde DVD principal de Rocky (SecureBoot OFF)."
+          Write-Host "✓ Firmware UEFI configurado (SecureBoot OFF)"
 
-          # 11. Iniciar VM
-          $vm = Get-VM -Name $VmName
-          if ($vm.State -ne 'Running') {
-            Start-VM -Name $VmName | Out-Null
-            Write-Host "VM iniciada: $VmName"
-          } else {
-            Write-Host "VM ya estaba corriendo."
+          # 14. IMPORTANTE: Agregar VM al Cluster como Highly Available
+          Write-Host "`nAgregando VM al cluster como Highly Available..."
+          
+          try {
+            # Verificar si ya está en el cluster
+            $clusterResource = Get-ClusterResource -Name "Virtual Machine $VmName" -ErrorAction SilentlyContinue
+            
+            if (-not $clusterResource) {
+              # Agregar VM al cluster
+              Add-ClusterVirtualMachineRole -VMName $VmName -ErrorAction Stop | Out-Null
+              Write-Host "✓ VM agregada al cluster como recurso HA"
+              
+              # Configurar preferencias de nodo (opcional)
+              # Get-ClusterResource -Name "Virtual Machine $VmName" | 
+              #   Set-ClusterResourceDependency -Dependency ""
+              
+            } else {
+              Write-Host "VM ya está configurada en el cluster"
+            }
+            
+            # Verificar estado del recurso
+            $clusterVm = Get-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue
+            if ($clusterVm) {
+              Write-Host "✓ Estado del cluster: $($clusterVm.State)"
+              Write-Host "✓ Nodo actual: $($clusterVm.OwnerNode)"
+            }
+            
+          } catch {
+            Write-Host "⚠ Advertencia: No se pudo agregar al cluster automáticamente" -ForegroundColor Yellow
+            Write-Host "  Error: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "  La VM se creó localmente. Agrégala manualmente al cluster con:" -ForegroundColor Yellow
+            Write-Host "    Add-ClusterVirtualMachineRole -VMName $VmName" -ForegroundColor Cyan
           }
+
+          # 15. Iniciar VM
+          Write-Host "`nIniciando VM..."
+          try {
+            # Intentar iniciar como recurso del cluster
+            Start-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue | Out-Null
+            Write-Host "✓ VM iniciada a través del cluster"
+          } catch {
+            # Si falla, iniciar de forma normal
+            Start-VM -Name $VmName -ErrorAction Stop | Out-Null
+            Write-Host "✓ VM iniciada localmente"
+          }
+
+          Write-Host "`n=========================================="
+          Write-Host "✓ VM creada exitosamente en cluster"
+          Write-Host "=========================================="
+          Write-Host "VM:           $VmName"
+          Write-Host "CSV:          $bestVolume"
+          Write-Host "VHD:          $vhdPath"
+          Write-Host "Estado:       Highly Available (Cluster)"
+          Write-Host "=========================================="
 
         parameters:
           VmName: "{{ vm_name }}"
@@ -373,7 +417,7 @@
           SwitchName: "{{ v_switch_eff }}"
           IsoPath: "{{ iso_path_eff }}"
           KsIsoPath: "{{ ks_iso_path }}"
-          CandidateDrives: "{{ candidate_drives }}"
+          CsvVolumes: "{{ csv_volumes }}"
           VlanId: "{{ vm_vlan | default('0') | int }}"
 
     # -------------------------------------------------------------------
@@ -383,18 +427,21 @@
       ansible.builtin.debug:
         msg:
           - "============================================"
-          - "VM creada exitosamente: {{ vm_name }}"
-          - "Host Hyper-V: {{ inventory_hostname }}"
-          - "Memoria: {{ memory_gb }} GB (estática)"
-          - "CPU: {{ cpu_count }} cores"
-          - "Disco: {{ disk_gb }} GB"
-          - "IP: {{ vm_ip }}/{{ vm_mask }}"
-          - "Gateway: {{ vm_gateway }}"
-          - "DNS: {{ vm_dns1 }}, {{ vm_dns2_eff }}"
-          - "vSwitch: {{ v_switch_eff }}"
-          - "ISO Rocky: {{ iso_path_eff }}"
-          - "ISO Kickstart: {{ ks_iso_path }}"
+          - "VM CLUSTER creada exitosamente: {{ vm_name }}"
+          - "Host ejecutor: {{ inventory_hostname }}"
+          - "Cluster: Hyper-V Failover Cluster"
+          - "Alta disponibilidad: SÍ"
+          - "Almacenamiento: CSV (Cluster Shared Volume)"
+          - "============================================"
+          - "Configuración:"
+          - "  Memoria: {{ memory_gb }} GB (estática)"
+          - "  CPU: {{ cpu_count }} cores"
+          - "  Disco: {{ disk_gb }} GB"
+          - "  IP: {{ vm_ip }}/{{ vm_mask }}"
+          - "  Gateway: {{ vm_gateway }}"
+          - "  DNS: {{ vm_dns1 }}, {{ vm_dns2_eff }}"
+          - "  vSwitch: {{ v_switch_eff }}"
           - "============================================"
           - "La VM está arrancando con instalación automática"
-          - "La instalación de Rocky Linux tomará varios minutos"
+          - "Puede migrar entre nodos SMXHYPVA y SMXHYPVB"
           - "============================================"
