@@ -393,15 +393,43 @@
 
           # ----------------------------------------------------------------
           # 14. Registrar VM en el Failover Cluster como Highly Available
+          #     NOTA: Add-ClusterVirtualMachineRole y Start-ClusterGroup
+          #     NO funcionan en sesiones WinRM remotas estándar (Access is denied).
+          #     Solución: ejecutarlos en un proceso local via cmd /c powershell
+          #     que corre en el contexto local del nodo, no en la sesión remota.
           # ----------------------------------------------------------------
           Write-Host "`nRegistrando VM en el Failover Cluster..."
 
           $clusterGroup = Get-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue
 
           if (-not $clusterGroup) {
+            # Construir script que se ejecutará localmente en el nodo
+            $registerScript = @"
+Import-Module FailoverClusters
+`$existing = Get-ClusterGroup -Name '$VmName' -ErrorAction SilentlyContinue
+if (-not `$existing) {
+    Add-ClusterVirtualMachineRole -VMName '$VmName' -ErrorAction Stop | Out-Null
+    Write-Output 'REGISTERED'
+} else {
+    Write-Output 'ALREADY_EXISTS'
+}
+"@
+            $encodedScript = [Convert]::ToBase64String(
+              [Text.Encoding]::Unicode.GetBytes($registerScript)
+            )
+
             try {
-              Add-ClusterVirtualMachineRole -VMName $VmName -ErrorAction Stop | Out-Null
-              Write-Host "✓ VM registrada como recurso HA en el cluster"
+              $result = & cmd /c "powershell -NonInteractive -EncodedCommand $encodedScript 2>&1"
+              $output = $result -join ' '
+              Write-Host "  Resultado registro: $output"
+
+              if ($output -match 'REGISTERED') {
+                Write-Host "✓ VM registrada como recurso HA en el cluster"
+              } elseif ($output -match 'ALREADY_EXISTS') {
+                Write-Host "La VM ya estaba registrada en el cluster"
+              } else {
+                throw "Respuesta inesperada al registrar en cluster: $output"
+              }
             } catch {
               throw "Error al registrar VM en cluster: $($_.Exception.Message)"
             }
@@ -425,18 +453,33 @@
           Write-Host "✓ ClusterGroup detectado: Estado=$($clusterGroup.State), Nodo=$($clusterGroup.OwnerNode)"
 
           # ----------------------------------------------------------------
-          # 15. Iniciar VM SIEMPRE a través del Failover Cluster
+          # 15. Iniciar VM a través del Failover Cluster (también local)
           # ----------------------------------------------------------------
           Write-Host "`nIniciando VM a través del Failover Cluster..."
 
           if ($clusterGroup.State -ne 'Online') {
+            $startScript = @"
+Import-Module FailoverClusters
+Start-ClusterGroup -Name '$VmName' -ErrorAction Stop | Out-Null
+Write-Output 'STARTED'
+"@
+            $encodedStart = [Convert]::ToBase64String(
+              [Text.Encoding]::Unicode.GetBytes($startScript)
+            )
+
             try {
-              Start-ClusterGroup -Name $VmName -ErrorAction Stop | Out-Null
+              $startResult = & cmd /c "powershell -NonInteractive -EncodedCommand $encodedStart 2>&1"
+              $startOutput = $startResult -join ' '
+              Write-Host "  Resultado inicio: $startOutput"
+
+              if ($startOutput -notmatch 'STARTED') {
+                throw "Respuesta inesperada al iniciar ClusterGroup: $startOutput"
+              }
 
               # Esperar hasta que quede Online (máx 60 seg)
-              $timeout  = 30
+              $timeout  = 60
               $elapsed  = 0
-              $interval = 2
+              $interval = 3
               do {
                 Start-Sleep -Seconds $interval
                 $elapsed     += $interval
@@ -447,9 +490,9 @@
               if ($clusterGroup.State -eq 'Online') {
                 Write-Host "✓ VM iniciada correctamente a través del cluster"
               } elseif ($clusterGroup.State -eq 'Failed') {
-                throw "El ClusterGroup entró en estado 'Failed'. Revisa el Event Viewer del nodo $($clusterGroup.OwnerNode)."
+                throw "El ClusterGroup entró en estado 'Failed'. Revisa Event Viewer en $($clusterGroup.OwnerNode)."
               } else {
-                Write-Host "⚠ La VM no alcanzó estado Online en $timeout segundos (estado: $($clusterGroup.State))"
+                Write-Host "⚠ La VM no alcanzó Online en $timeout segundos (estado: $($clusterGroup.State))"
               }
             } catch {
               throw "Error al iniciar VM en cluster: $($_.Exception.Message)"
