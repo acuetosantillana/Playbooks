@@ -210,89 +210,62 @@
           }
 
           # ----------------------------------------------------------------
-          # 2. Seleccionar CSV con MÁS espacio libre usando WMI
-          #    (los CSV no tienen letra de unidad, Get-Volume -DriveLetter no sirve)
+          # 2. Seleccionar CSV con MÁS espacio libre
+          #    Usa Get-ClusterSharedVolume -> SharedVolumeInfo.FriendlyVolumeName
+          #    que devuelve exactamente "C:\ClusterStorage\VolumeX" — match directo
+          #    con las rutas en $CsvVolumes. Sin WMI, sin Win32_Volume.
           # ----------------------------------------------------------------
           Write-Host "`nSeleccionando volumen CSV con más espacio disponible..."
 
-          # Obtener info de todos los CSV del cluster vía WMI
-          $csvInfo = Get-WmiObject -Namespace root\MSCluster -Class MSCluster_Resource `
-                      -Filter "Type='Physical Disk'" -ErrorAction SilentlyContinue
-
-          # Mapeo: nombre de carpeta CSV -> espacio libre real
+          # Construir tabla: FriendlyVolumeName (normalizado) -> FreeSpace
           $csvFreeMap = @{}
+          Get-ClusterSharedVolume | ForEach-Object {
+            foreach ($vol in $_.SharedVolumeInfo) {
+              $key             = $vol.FriendlyVolumeName.TrimEnd('\')
+              $csvFreeMap[$key] = $vol.Partition.FreeSpace
+            }
+          }
 
+          if ($csvFreeMap.Count -eq 0) {
+            throw "Get-ClusterSharedVolume no devolvió volúmenes. Verifica que el cluster está Online."
+          }
+
+          # Mostrar estado de cada volumen del parámetro $CsvVolumes
+          Write-Host ""
+          Write-Host ("  {0,-42} {1,12}  {2}" -f "Volumen", "Libre (GB)", "Estado")
+          Write-Host "  $('-'*65)"
           foreach ($csvPath in $CsvVolumes) {
-            if (-not (Test-Path $csvPath)) {
-              Write-Host "  $csvPath - No accesible, omitiendo"
-              continue
-            }
-
-            try {
-              # Usar Get-PSDrive o DirectoryInfo para obtener espacio
-              # El método más confiable para CSV: Win32_Volume por DeviceID
-              $volName = (Get-Item $csvPath).Name  # "Volume1", "Volume2", etc.
-
-              # Buscar en Win32_Volume filtrando por label o path
-              $winVol = Get-WmiObject Win32_Volume | Where-Object {
-                $_.Name -like "*ClusterStorage*" -and $_.Caption -like "*$csvPath*"
-              } | Select-Object -First 1
-
-              if (-not $winVol) {
-                # Fallback: usar System.IO.DriveInfo sobre la raíz C:\ClusterStorage
-                # Los CSV son reparse points bajo C:\ClusterStorage\
-                # El espacio real se obtiene via .NET sobre la ruta completa
-                $driveInfo = [System.IO.DriveInfo]::new("C:")
-                # No sirve para CSV individual, usamos alternativa con fsutil/robocopy trick
-                # Mejor opción: Get-ClusterSharedVolume
-                $csvObj = Get-ClusterSharedVolume | Where-Object {
-                  $_.SharedVolumeInfo.FriendlyVolumeName -like "*$volName*" -or
-                  $_.Name -like "*$volName*"
-                } | Select-Object -First 1
-
-                if ($csvObj) {
-                  $freeBytes = $csvObj.SharedVolumeInfo.Partition.FreeSpace
-                  $csvFreeMap[$csvPath] = $freeBytes
-                  Write-Host ("  {0} - Libre: {1:N2} GB  [via ClusterSharedVolume]" -f $csvPath, ($freeBytes/1GB))
-                } else {
-                  Write-Host "  $csvPath - No se pudo obtener espacio, asignando 0"
-                  $csvFreeMap[$csvPath] = 0
-                }
-              } else {
-                $freeBytes = $winVol.FreeSpace
-                $csvFreeMap[$csvPath] = $freeBytes
-                Write-Host ("  {0} - Libre: {1:N2} GB  [via Win32_Volume]" -f $csvPath, ($freeBytes/1GB))
-              }
-            } catch {
-              Write-Host "  $csvPath - Error al obtener espacio: $($_.Exception.Message)"
-              $csvFreeMap[$csvPath] = 0
+            $key = $csvPath.TrimEnd('\')
+            if ($csvFreeMap.ContainsKey($key)) {
+              Write-Host ("  {0,-42} {1,12:N2}  Online" -f $key, ($csvFreeMap[$key]/1GB))
+            } else {
+              Write-Host ("  {0,-42} {1,12}  No encontrado en cluster" -f $key, "N/A")
             }
           }
 
-          # Elegir el CSV con mayor espacio libre
-          $bestVolume = $csvFreeMap.GetEnumerator() |
-                          Sort-Object Value -Descending |
-                          Select-Object -First 1
-
-          if (-not $bestVolume -or $bestVolume.Value -eq 0) {
-            # Último fallback: tomar el primero accesible
-            $bestVolume = [PSCustomObject]@{
-              Key   = ($CsvVolumes | Where-Object { Test-Path $_ } | Select-Object -First 1)
-              Value = 0
+          # Filtrar solo volúmenes que están en $CsvVolumes Y visibles en el cluster
+          $candidates = $CsvVolumes | ForEach-Object {
+            $key = $_.TrimEnd('\')
+            if ($csvFreeMap.ContainsKey($key)) {
+              [PSCustomObject]@{ Path = $key; FreeBytes = $csvFreeMap[$key] }
             }
-            Write-Host "⚠ No se obtuvo espacio de ningún CSV, usando primer volumen disponible"
+          } | Where-Object { $_ -ne $null }
+
+          if (-not $candidates) {
+            throw "Ninguno de los volúmenes en CsvVolumes fue encontrado en Get-ClusterSharedVolume."
           }
 
-          $selectedCsv  = $bestVolume.Key
-          $selectedFree = $bestVolume.Value
+          # Tomar el de mayor espacio libre
+          $best         = $candidates | Sort-Object FreeBytes -Descending | Select-Object -First 1
+          $selectedCsv  = $best.Path
+          $selectedFree = $best.FreeBytes
 
-          Write-Host "`n✓ Volumen seleccionado: $selectedCsv"
-          if ($selectedFree -gt 0) {
-            Write-Host ("  Espacio libre: {0:N2} GB" -f ($selectedFree/1GB))
-          }
+          Write-Host ""
+          Write-Host "✓ Volumen seleccionado: $selectedCsv"
+          Write-Host ("  Espacio libre : {0:N2} GB" -f ($selectedFree/1GB))
 
-          # Validar que hay espacio suficiente
-          if ($selectedFree -gt 0 -and $selectedFree -lt $DiskBytes) {
+          # Validar espacio suficiente para el disco de la VM
+          if ($selectedFree -lt $DiskBytes) {
             throw ("Espacio insuficiente en {0}. Libre: {1:N2} GB, Requerido: {2:N2} GB" -f `
               $selectedCsv, ($selectedFree/1GB), ($DiskBytes/1GB))
           }
@@ -498,7 +471,150 @@
           VlanId: "{{ vm_vlan | default('0') | int }}"
 
     # -------------------------------------------------------------------
-    # 5) Mensaje final
+    # 5) Esperar a que la instalación finalice (ping + SSH)
+    # -------------------------------------------------------------------
+    - name: "[Post-install] Esperar conectividad PING a la VM (máx 30 min)"
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$IpAddress, [int]$TimeoutSeconds)
+
+          $elapsed  = 0
+          $interval = 15
+          $success  = $false
+
+          Write-Host "Esperando respuesta PING en $IpAddress ..."
+
+          while ($elapsed -lt $TimeoutSeconds) {
+            $ping = Test-Connection -ComputerName $IpAddress -Count 1 -Quiet -ErrorAction SilentlyContinue
+            if ($ping) {
+              Write-Host "✓ PING exitoso a $IpAddress (${elapsed}s)"
+              $success = $true
+              break
+            }
+            Write-Host "  Sin respuesta PING... ($elapsed s / $TimeoutSeconds s)"
+            Start-Sleep -Seconds $interval
+            $elapsed += $interval
+          }
+
+          if (-not $success) {
+            throw "Timeout: la VM $IpAddress no respondió PING en $TimeoutSeconds segundos."
+          }
+        parameters:
+          IpAddress: "{{ vm_ip }}"
+          TimeoutSeconds: 1800   # 30 minutos
+
+    - name: "[Post-install] Esperar puerto SSH 22 activo en la VM (máx 10 min)"
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$IpAddress, [int]$TimeoutSeconds)
+
+          $elapsed  = 0
+          $interval = 10
+          $success  = $false
+
+          Write-Host "Esperando puerto SSH (22) en $IpAddress ..."
+
+          while ($elapsed -lt $TimeoutSeconds) {
+            try {
+              $tcp = New-Object System.Net.Sockets.TcpClient
+              $conn = $tcp.BeginConnect($IpAddress, 22, $null, $null)
+              $wait = $conn.AsyncWaitHandle.WaitOne(3000, $false)
+              if ($wait -and $tcp.Connected) {
+                $tcp.Close()
+                Write-Host "✓ Puerto SSH 22 accesible en $IpAddress (${elapsed}s)"
+                $success = $true
+                break
+              }
+              $tcp.Close()
+            } catch { }
+
+            Write-Host "  SSH no disponible aún... ($elapsed s / $TimeoutSeconds s)"
+            Start-Sleep -Seconds $interval
+            $elapsed += $interval
+          }
+
+          if (-not $success) {
+            throw "Timeout: SSH no disponible en $IpAddress tras $TimeoutSeconds segundos."
+          }
+        parameters:
+          IpAddress: "{{ vm_ip }}"
+          TimeoutSeconds: 600    # 10 minutos adicionales tras el ping
+
+    # -------------------------------------------------------------------
+    # 6) Desmontar DVDs de la VM
+    # -------------------------------------------------------------------
+    - name: "[Post-install] Desmontar todas las unidades DVD de la VM"
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$VmName)
+
+          Import-Module Hyper-V
+
+          # La VM debe estar apagada para quitar DVDs con ISO montada
+          # Primero intentamos quitar la ISO sin apagar (Set-VMDvdDrive -ToControllerLocation)
+          $dvds = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
+
+          if (-not $dvds) {
+            Write-Host "No se encontraron unidades DVD en $VmName"
+            return
+          }
+
+          foreach ($dvd in $dvds) {
+            try {
+              # Desmontar la ISO (dejar la unidad vacía)
+              Set-VMDvdDrive -VMName $VmName `
+                             -ControllerNumber $dvd.ControllerNumber `
+                             -ControllerLocation $dvd.ControllerLocation `
+                             -Path $null `
+                             -ErrorAction Stop
+              Write-Host ("✓ DVD desmontado: SCSI {0}:{1} (era: {2})" -f `
+                $dvd.ControllerNumber, $dvd.ControllerLocation, $dvd.Path)
+            } catch {
+              Write-Host ("⚠ No se pudo desmontar SCSI {0}:{1}: {2}" -f `
+                $dvd.ControllerNumber, $dvd.ControllerLocation, $_.Exception.Message)
+            }
+          }
+
+          # Verificar resultado
+          $remaining = Get-VMDvdDrive -VMName $VmName |
+                         Where-Object { $_.Path -ne $null -and $_.Path -ne '' }
+          if ($remaining) {
+            Write-Host "⚠ Quedan $($remaining.Count) DVD(s) con ISO montada"
+          } else {
+            Write-Host "✓ Todas las unidades DVD están vacías"
+          }
+        parameters:
+          VmName: "{{ vm_name }}"
+
+    # -------------------------------------------------------------------
+    # 7) Limpieza de archivos temporales en el host Hyper-V
+    # -------------------------------------------------------------------
+    - name: "[Cleanup] Eliminar ISO Kickstart"
+      ansible.windows.win_file:
+        path: "{{ ks_iso_path }}"
+        state: absent
+
+    - name: "[Cleanup] Eliminar carpeta Kickstart de la VM"
+      ansible.windows.win_file:
+        path: "{{ ks_dir }}"
+        state: absent
+
+    - name: "[Cleanup] Verificar carpeta C:\\kickstart si quedó vacía"
+      ansible.windows.win_powershell:
+        script: |
+          $ksRoot = "C:\kickstart"
+          if (Test-Path $ksRoot) {
+            $remaining = Get-ChildItem -Path $ksRoot -Recurse -ErrorAction SilentlyContinue
+            if (-not $remaining) {
+              Remove-Item -Path $ksRoot -Force -Recurse
+              Write-Host "✓ Carpeta C:\kickstart eliminada (estaba vacía)"
+            } else {
+              Write-Host ("ℹ C:\kickstart aún contiene {0} elemento(s) de otras VMs, conservada" -f $remaining.Count)
+            }
+          }
+
+    # -------------------------------------------------------------------
+    # 8) Mensaje final
     # -------------------------------------------------------------------
     - name: Resumen de la creación
       ansible.builtin.debug:
@@ -519,6 +635,8 @@
           - "  DNS: {{ vm_dns1 }}, {{ vm_dns2_eff }}"
           - "  vSwitch: {{ v_switch_eff }}"
           - "============================================"
-          - "La VM está arrancando con instalación automática"
+          - "Instalación completada y verificada via SSH"
+          - "DVDs desmontados, archivos temporales eliminados"
+          - "C:\\ISOs conservada (contiene otros datos)"
           - "Puede migrar entre nodos SMXHYPVA y SMXHYPVB"
           - "============================================"
