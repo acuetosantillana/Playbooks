@@ -391,125 +391,12 @@
             -FirstBootDevice $dvd
           Write-Host "✓ Firmware UEFI configurado (SecureBoot OFF)"
 
-          # ----------------------------------------------------------------
-          # 14. Registrar VM en el Failover Cluster como Highly Available
-          #     NOTA: Add-ClusterVirtualMachineRole y Start-ClusterGroup
-          #     NO funcionan en sesiones WinRM remotas estándar (Access is denied).
-          #     Solución: ejecutarlos en un proceso local via cmd /c powershell
-          #     que corre en el contexto local del nodo, no en la sesión remota.
-          # ----------------------------------------------------------------
-          Write-Host "`nRegistrando VM en el Failover Cluster..."
-
-          $clusterGroup = Get-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue
-
-          if (-not $clusterGroup) {
-            # Construir script que se ejecutará localmente en el nodo
-            $registerScript = @"
-Import-Module FailoverClusters
-`$existing = Get-ClusterGroup -Name '$VmName' -ErrorAction SilentlyContinue
-if (-not `$existing) {
-    Add-ClusterVirtualMachineRole -VMName '$VmName' -ErrorAction Stop | Out-Null
-    Write-Output 'REGISTERED'
-} else {
-    Write-Output 'ALREADY_EXISTS'
-}
-"@
-            $encodedScript = [Convert]::ToBase64String(
-              [Text.Encoding]::Unicode.GetBytes($registerScript)
-            )
-
-            try {
-              $result = & cmd /c "powershell -NonInteractive -EncodedCommand $encodedScript 2>&1"
-              $output = $result -join ' '
-              Write-Host "  Resultado registro: $output"
-
-              if ($output -match 'REGISTERED') {
-                Write-Host "✓ VM registrada como recurso HA en el cluster"
-              } elseif ($output -match 'ALREADY_EXISTS') {
-                Write-Host "La VM ya estaba registrada en el cluster"
-              } else {
-                throw "Respuesta inesperada al registrar en cluster: $output"
-              }
-            } catch {
-              throw "Error al registrar VM en cluster: $($_.Exception.Message)"
-            }
-          } else {
-            Write-Host "La VM ya estaba registrada en el cluster"
-          }
-
-          # Esperar a que el ClusterGroup esté disponible (máx 30 seg)
-          $clusterGroup = $null
-          for ($i = 1; $i -le 15; $i++) {
-            $clusterGroup = Get-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue
-            if ($clusterGroup) { break }
-            Write-Host "  Esperando ClusterGroup... intento $i/15"
-            Start-Sleep -Seconds 2
-          }
-
-          if (-not $clusterGroup) {
-            throw "El ClusterGroup '$VmName' no apareció tras registrar la VM en el cluster."
-          }
-
-          Write-Host "✓ ClusterGroup detectado: Estado=$($clusterGroup.State), Nodo=$($clusterGroup.OwnerNode)"
-
-          # ----------------------------------------------------------------
-          # 15. Iniciar VM a través del Failover Cluster (también local)
-          # ----------------------------------------------------------------
-          Write-Host "`nIniciando VM a través del Failover Cluster..."
-
-          if ($clusterGroup.State -ne 'Online') {
-            $startScript = @"
-Import-Module FailoverClusters
-Start-ClusterGroup -Name '$VmName' -ErrorAction Stop | Out-Null
-Write-Output 'STARTED'
-"@
-            $encodedStart = [Convert]::ToBase64String(
-              [Text.Encoding]::Unicode.GetBytes($startScript)
-            )
-
-            try {
-              $startResult = & cmd /c "powershell -NonInteractive -EncodedCommand $encodedStart 2>&1"
-              $startOutput = $startResult -join ' '
-              Write-Host "  Resultado inicio: $startOutput"
-
-              if ($startOutput -notmatch 'STARTED') {
-                throw "Respuesta inesperada al iniciar ClusterGroup: $startOutput"
-              }
-
-              # Esperar hasta que quede Online (máx 60 seg)
-              $timeout  = 60
-              $elapsed  = 0
-              $interval = 3
-              do {
-                Start-Sleep -Seconds $interval
-                $elapsed     += $interval
-                $clusterGroup = Get-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue
-                Write-Host "  Estado cluster: $($clusterGroup.State) ($elapsed s)"
-              } while ($clusterGroup.State -notin @('Online','Failed') -and $elapsed -lt $timeout)
-
-              if ($clusterGroup.State -eq 'Online') {
-                Write-Host "✓ VM iniciada correctamente a través del cluster"
-              } elseif ($clusterGroup.State -eq 'Failed') {
-                throw "El ClusterGroup entró en estado 'Failed'. Revisa Event Viewer en $($clusterGroup.OwnerNode)."
-              } else {
-                Write-Host "⚠ La VM no alcanzó Online en $timeout segundos (estado: $($clusterGroup.State))"
-              }
-            } catch {
-              throw "Error al iniciar VM en cluster: $($_.Exception.Message)"
-            }
-          } else {
-            Write-Host "La VM ya estaba en estado Online en el cluster"
-          }
-
           Write-Host "`n=========================================="
-          Write-Host "✓ VM creada y registrada en Failover Cluster"
+          Write-Host "✓ VM creada en CSV - pendiente registro cluster"
           Write-Host "=========================================="
-          Write-Host "VM:           $VmName"
-          Write-Host "CSV:          $selectedCsv"
-          Write-Host "VHD:          $vhdPath"
-          Write-Host "Cluster:      $($cluster.Name)"
-          Write-Host "Nodo actual:  $($clusterGroup.OwnerNode)"
-          Write-Host "Estado:       $($clusterGroup.State)"
+          Write-Host "VM:    $VmName"
+          Write-Host "CSV:   $selectedCsv"
+          Write-Host "VHD:   $vhdPath"
           Write-Host "=========================================="
 
         parameters:
@@ -522,6 +409,71 @@ Write-Output 'STARTED'
           KsIsoPath: "{{ ks_iso_path }}"
           CsvVolumes: "{{ csv_volumes }}"
           VlanId: "{{ vm_vlan | default('0') | int }}"
+
+    # -------------------------------------------------------------------
+    # 4b) Registrar VM en el Failover Cluster (win_shell - contexto local)
+    #     Add-ClusterVirtualMachineRole NO funciona en sesión WinRM remota.
+    #     win_shell lanza cmd.exe localmente en el nodo, lo que sí tiene
+    #     los privilegios necesarios para operar el cluster.
+    # -------------------------------------------------------------------
+    - name: Registrar VM en Failover Cluster como recurso HA
+      ansible.windows.win_shell: |
+        $existing = Get-ClusterGroup -Name "{{ vm_name }}" -ErrorAction SilentlyContinue
+        if (-not $existing) {
+          Import-Module FailoverClusters
+          Add-ClusterVirtualMachineRole -VMName "{{ vm_name }}" -ErrorAction Stop | Out-Null
+          Write-Output "REGISTERED"
+        } else {
+          Write-Output "ALREADY_EXISTS"
+        }
+      register: cluster_register
+      failed_when: >
+        cluster_register.stdout is not search('REGISTERED') and
+        cluster_register.stdout is not search('ALREADY_EXISTS')
+
+    - name: Esperar que el ClusterGroup quede disponible
+      ansible.windows.win_shell: |
+        $group = $null
+        for ($i = 1; $i -le 15; $i++) {
+          $group = Get-ClusterGroup -Name "{{ vm_name }}" -ErrorAction SilentlyContinue
+          if ($group) {
+            Write-Output "FOUND:$($group.State):$($group.OwnerNode)"
+            exit 0
+          }
+          Start-Sleep -Seconds 2
+        }
+        Write-Output "NOTFOUND"
+        exit 1
+      register: cluster_group_check
+      failed_when: cluster_group_check.stdout is search('NOTFOUND')
+
+    - name: Iniciar VM a través del Failover Cluster
+      ansible.windows.win_shell: |
+        $group = Get-ClusterGroup -Name "{{ vm_name }}" -ErrorAction SilentlyContinue
+        if ($group.State -ne 'Online') {
+          Start-ClusterGroup -Name "{{ vm_name }}" -ErrorAction Stop | Out-Null
+          # Esperar Online (max 60 seg)
+          $elapsed = 0
+          do {
+            Start-Sleep -Seconds 3
+            $elapsed += 3
+            $group = Get-ClusterGroup -Name "{{ vm_name }}" -ErrorAction SilentlyContinue
+            Write-Host "  Estado: $($group.State) (${elapsed}s)"
+          } while ($group.State -notin @('Online','Failed') -and $elapsed -lt 60)
+
+          if ($group.State -eq 'Online') {
+            Write-Output "VM_ONLINE"
+          } elseif ($group.State -eq 'Failed') {
+            Write-Output "VM_FAILED"
+            exit 1
+          } else {
+            Write-Output "VM_TIMEOUT:$($group.State)"
+          }
+        } else {
+          Write-Output "VM_ALREADY_ONLINE"
+        }
+      register: cluster_start
+      failed_when: cluster_start.stdout is search('VM_FAILED')
 
     # -------------------------------------------------------------------
     # 5) Esperar a que la instalación finalice (ping + SSH)
