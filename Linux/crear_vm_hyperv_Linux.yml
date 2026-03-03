@@ -212,16 +212,17 @@
           # ----------------------------------------------------------------
           # 2. Seleccionar CSV con MÁS espacio libre
           #    Usa Get-ClusterSharedVolume -> SharedVolumeInfo.FriendlyVolumeName
-          #    que devuelve exactamente "C:\ClusterStorage\VolumeX" — match directo
-          #    con las rutas en $CsvVolumes. Sin WMI, sin Win32_Volume.
+          #    IMPORTANTE: Ansible escapa backslashes al pasar arrays (C:\\ClusterStorage\\)
+          #    Por eso normalizamos AMBOS lados antes de comparar.
           # ----------------------------------------------------------------
           Write-Host "`nSeleccionando volumen CSV con más espacio disponible..."
 
-          # Construir tabla: FriendlyVolumeName (normalizado) -> FreeSpace
+          # Construir tabla: FriendlyVolumeName normalizado -> FreeSpace
           $csvFreeMap = @{}
           Get-ClusterSharedVolume | ForEach-Object {
             foreach ($vol in $_.SharedVolumeInfo) {
-              $key             = $vol.FriendlyVolumeName.TrimEnd('\')
+              # Normalizar: un solo backslash, sin trailing slash, lowercase
+              $key = $vol.FriendlyVolumeName.Replace('\\','\').TrimEnd('\').ToLower()
               $csvFreeMap[$key] = $vol.Partition.FreeSpace
             }
           }
@@ -230,24 +231,33 @@
             throw "Get-ClusterSharedVolume no devolvió volúmenes. Verifica que el cluster está Online."
           }
 
+          # Debug: mostrar qué keys quedaron en el mapa
+          Write-Host "  Volúmenes detectados en cluster:"
+          $csvFreeMap.GetEnumerator() | ForEach-Object {
+            Write-Host ("    '{0}'  ->  {1:N2} GB libres" -f $_.Key, ($_.Value/1GB))
+          }
+
           # Mostrar estado de cada volumen del parámetro $CsvVolumes
           Write-Host ""
           Write-Host ("  {0,-42} {1,12}  {2}" -f "Volumen", "Libre (GB)", "Estado")
           Write-Host "  $('-'*65)"
           foreach ($csvPath in $CsvVolumes) {
-            $key = $csvPath.TrimEnd('\')
+            # Normalizar igual: doble backslash -> simple, sin trailing, lowercase
+            $key = $csvPath.Replace('\\','\').TrimEnd('\').ToLower()
             if ($csvFreeMap.ContainsKey($key)) {
-              Write-Host ("  {0,-42} {1,12:N2}  Online" -f $key, ($csvFreeMap[$key]/1GB))
+              Write-Host ("  {0,-42} {1,12:N2}  Online" -f $csvPath, ($csvFreeMap[$key]/1GB))
             } else {
-              Write-Host ("  {0,-42} {1,12}  No encontrado en cluster" -f $key, "N/A")
+              Write-Host ("  {0,-42} {1,12}  No encontrado en cluster" -f $csvPath, "N/A")
             }
           }
 
           # Filtrar solo volúmenes que están en $CsvVolumes Y visibles en el cluster
           $candidates = $CsvVolumes | ForEach-Object {
-            $key = $_.TrimEnd('\')
+            $key = $_.Replace('\\','\').TrimEnd('\').ToLower()
             if ($csvFreeMap.ContainsKey($key)) {
-              [PSCustomObject]@{ Path = $key; FreeBytes = $csvFreeMap[$key] }
+              # Usar la ruta normalizada como Path (backslash simple)
+              $normalizedPath = $_.Replace('\\','\').TrimEnd('\')
+              [PSCustomObject]@{ Path = $normalizedPath; FreeBytes = $csvFreeMap[$key] }
             }
           } | Where-Object { $_ -ne $null }
 
