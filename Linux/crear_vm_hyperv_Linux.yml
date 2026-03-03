@@ -206,51 +206,109 @@
             $cluster = Get-Cluster -ErrorAction Stop
             Write-Host "Cluster detectado: $($cluster.Name)"
           } catch {
-            throw "No se puede conectar al cluster de failover. Asegúrate de que este nodo es parte del cluster."
+            throw "No se puede conectar al cluster de failover."
           }
 
-          # 2. Seleccionar CSV con más espacio disponible
-          Write-Host "`nSeleccionando volumen CSV con más espacio..."
-          
-          $bestVolume = $null
-          $maxFreeSpace = 0
-          
+          # ----------------------------------------------------------------
+          # 2. Seleccionar CSV con MÁS espacio libre usando WMI
+          #    (los CSV no tienen letra de unidad, Get-Volume -DriveLetter no sirve)
+          # ----------------------------------------------------------------
+          Write-Host "`nSeleccionando volumen CSV con más espacio disponible..."
+
+          # Obtener info de todos los CSV del cluster vía WMI
+          $csvInfo = Get-WmiObject -Namespace root\MSCluster -Class MSCluster_Resource `
+                      -Filter "Type='Physical Disk'" -ErrorAction SilentlyContinue
+
+          # Mapeo: nombre de carpeta CSV -> espacio libre real
+          $csvFreeMap = @{}
+
           foreach ($csvPath in $CsvVolumes) {
-            if (Test-Path $csvPath) {
-              try {
-                $volume = Get-Item $csvPath -ErrorAction Stop
-                $freeSpace = (Get-Volume -DriveLetter ($csvPath.Substring(0,1))).SizeRemaining
-                
-                Write-Host "  $csvPath - Libre: $([math]::Round($freeSpace/1GB, 2)) GB"
-                
-                if ($freeSpace -gt $maxFreeSpace) {
-                  $maxFreeSpace = $freeSpace
-                  $bestVolume = $csvPath
+            if (-not (Test-Path $csvPath)) {
+              Write-Host "  $csvPath - No accesible, omitiendo"
+              continue
+            }
+
+            try {
+              # Usar Get-PSDrive o DirectoryInfo para obtener espacio
+              # El método más confiable para CSV: Win32_Volume por DeviceID
+              $volName = (Get-Item $csvPath).Name  # "Volume1", "Volume2", etc.
+
+              # Buscar en Win32_Volume filtrando por label o path
+              $winVol = Get-WmiObject Win32_Volume | Where-Object {
+                $_.Name -like "*ClusterStorage*" -and $_.Caption -like "*$csvPath*"
+              } | Select-Object -First 1
+
+              if (-not $winVol) {
+                # Fallback: usar System.IO.DriveInfo sobre la raíz C:\ClusterStorage
+                # Los CSV son reparse points bajo C:\ClusterStorage\
+                # El espacio real se obtiene via .NET sobre la ruta completa
+                $driveInfo = [System.IO.DriveInfo]::new("C:")
+                # No sirve para CSV individual, usamos alternativa con fsutil/robocopy trick
+                # Mejor opción: Get-ClusterSharedVolume
+                $csvObj = Get-ClusterSharedVolume | Where-Object {
+                  $_.SharedVolumeInfo.FriendlyVolumeName -like "*$volName*" -or
+                  $_.Name -like "*$volName*"
+                } | Select-Object -First 1
+
+                if ($csvObj) {
+                  $freeBytes = $csvObj.SharedVolumeInfo.Partition.FreeSpace
+                  $csvFreeMap[$csvPath] = $freeBytes
+                  Write-Host ("  {0} - Libre: {1:N2} GB  [via ClusterSharedVolume]" -f $csvPath, ($freeBytes/1GB))
+                } else {
+                  Write-Host "  $csvPath - No se pudo obtener espacio, asignando 0"
+                  $csvFreeMap[$csvPath] = 0
                 }
-              } catch {
-                Write-Host "  $csvPath - No accesible" -ForegroundColor Yellow
+              } else {
+                $freeBytes = $winVol.FreeSpace
+                $csvFreeMap[$csvPath] = $freeBytes
+                Write-Host ("  {0} - Libre: {1:N2} GB  [via Win32_Volume]" -f $csvPath, ($freeBytes/1GB))
               }
+            } catch {
+              Write-Host "  $csvPath - Error al obtener espacio: $($_.Exception.Message)"
+              $csvFreeMap[$csvPath] = 0
             }
           }
 
-          if (-not $bestVolume) {
-            throw "No se encontró ningún volumen CSV disponible"
+          # Elegir el CSV con mayor espacio libre
+          $bestVolume = $csvFreeMap.GetEnumerator() |
+                          Sort-Object Value -Descending |
+                          Select-Object -First 1
+
+          if (-not $bestVolume -or $bestVolume.Value -eq 0) {
+            # Último fallback: tomar el primero accesible
+            $bestVolume = [PSCustomObject]@{
+              Key   = ($CsvVolumes | Where-Object { Test-Path $_ } | Select-Object -First 1)
+              Value = 0
+            }
+            Write-Host "⚠ No se obtuvo espacio de ningún CSV, usando primer volumen disponible"
           }
 
-          Write-Host "`n✓ Volumen seleccionado: $bestVolume"
-          Write-Host "  Espacio libre: $([math]::Round($maxFreeSpace/1GB, 2)) GB"
+          $selectedCsv  = $bestVolume.Key
+          $selectedFree = $bestVolume.Value
 
+          Write-Host "`n✓ Volumen seleccionado: $selectedCsv"
+          if ($selectedFree -gt 0) {
+            Write-Host ("  Espacio libre: {0:N2} GB" -f ($selectedFree/1GB))
+          }
+
+          # Validar que hay espacio suficiente
+          if ($selectedFree -gt 0 -and $selectedFree -lt $DiskBytes) {
+            throw ("Espacio insuficiente en {0}. Libre: {1:N2} GB, Requerido: {2:N2} GB" -f `
+              $selectedCsv, ($selectedFree/1GB), ($DiskBytes/1GB))
+          }
+
+          # ----------------------------------------------------------------
           # 3. Crear estructura de directorios en CSV
-          $vmRoot = Join-Path $bestVolume $VmName
+          # ----------------------------------------------------------------
+          $vmRoot = Join-Path $selectedCsv $VmName
           $vhdPath = Join-Path $vmRoot "Virtual Hard Disks\$VmName.vhdx"
-          $vhdDir = Split-Path $vhdPath -Parent
+          $vhdDir  = Split-Path $vhdPath -Parent
 
           foreach ($dir in @($vmRoot, $vhdDir)) {
             if (-not (Test-Path $dir)) {
               New-Item -ItemType Directory -Path $dir -Force | Out-Null
             }
           }
-
           Write-Host "✓ Estructura de directorios creada en CSV"
 
           # 4. Validar ISOs
@@ -287,14 +345,12 @@
           # 7. Configurar VLAN si es necesario
           if ($VlanId -gt 0) {
             Write-Host "Configurando VLAN $VlanId..."
-            
             $nic = $null
             for ($i = 1; $i -le 10; $i++) {
               $nic = Get-VMNetworkAdapter -VMName $VmName -ErrorAction SilentlyContinue
               if ($nic) { break }
               Start-Sleep -Seconds 1
             }
-
             if ($nic) {
               Set-VMNetworkAdapterVlan -VMName $VmName `
                                        -VMNetworkAdapterName $nic.Name `
@@ -312,17 +368,17 @@
                                -ControllerLocation 2 `
                                -Path $vhdPath
 
-          # 9. Configurar CPU y memoria (estática para cluster)
+          # 9. Configurar CPU y memoria estática
           Set-VMProcessor -VMName $VmName -Count $CpuCount
           Set-VMMemory -VMName $VmName `
             -DynamicMemoryEnabled $false `
             -StartupBytes $MemoryBytes
 
-          # 10. Apagar VM antes de configurar firmware/DVD
+          # 10. Asegurar VM apagada antes de configurar firmware/DVD
           $vm = Get-VM -Name $VmName
           if ($vm.State -ne 'Off') {
             Stop-VM -Name $VmName -TurnOff -Force
-            Start-Sleep -Seconds 2
+            Start-Sleep -Seconds 3
           }
 
           # 11. Quitar DVDs existentes
@@ -347,66 +403,87 @@
 
           # 13. Configurar firmware UEFI
           $dvd = Get-VMDvdDrive -VMName $VmName | Where-Object { $_.Path -eq $IsoPath }
-
           Set-VMFirmware -VMName $VmName `
             -EnableSecureBoot Off `
             -FirstBootDevice $dvd
-
           Write-Host "✓ Firmware UEFI configurado (SecureBoot OFF)"
 
-          # 14. IMPORTANTE: Agregar VM al Cluster como Highly Available
-          Write-Host "`nAgregando VM al cluster como Highly Available..."
-          
-          try {
-            # Verificar si ya está en el cluster
-            $clusterResource = Get-ClusterResource -Name "Virtual Machine $VmName" -ErrorAction SilentlyContinue
-            
-            if (-not $clusterResource) {
-              # Agregar VM al cluster
+          # ----------------------------------------------------------------
+          # 14. Registrar VM en el Failover Cluster como Highly Available
+          # ----------------------------------------------------------------
+          Write-Host "`nRegistrando VM en el Failover Cluster..."
+
+          $clusterGroup = Get-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue
+
+          if (-not $clusterGroup) {
+            try {
               Add-ClusterVirtualMachineRole -VMName $VmName -ErrorAction Stop | Out-Null
-              Write-Host "✓ VM agregada al cluster como recurso HA"
-              
-              # Configurar preferencias de nodo (opcional)
-              # Get-ClusterResource -Name "Virtual Machine $VmName" | 
-              #   Set-ClusterResourceDependency -Dependency ""
-              
-            } else {
-              Write-Host "VM ya está configurada en el cluster"
+              Write-Host "✓ VM registrada como recurso HA en el cluster"
+            } catch {
+              throw "Error al registrar VM en cluster: $($_.Exception.Message)"
             }
-            
-            # Verificar estado del recurso
-            $clusterVm = Get-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue
-            if ($clusterVm) {
-              Write-Host "✓ Estado del cluster: $($clusterVm.State)"
-              Write-Host "✓ Nodo actual: $($clusterVm.OwnerNode)"
-            }
-            
-          } catch {
-            Write-Host "⚠ Advertencia: No se pudo agregar al cluster automáticamente" -ForegroundColor Yellow
-            Write-Host "  Error: $($_.Exception.Message)" -ForegroundColor Yellow
-            Write-Host "  La VM se creó localmente. Agrégala manualmente al cluster con:" -ForegroundColor Yellow
-            Write-Host "    Add-ClusterVirtualMachineRole -VMName $VmName" -ForegroundColor Cyan
+          } else {
+            Write-Host "La VM ya estaba registrada en el cluster"
           }
 
-          # 15. Iniciar VM
-          Write-Host "`nIniciando VM..."
-          try {
-            # Intentar iniciar como recurso del cluster
-            Start-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue | Out-Null
-            Write-Host "✓ VM iniciada a través del cluster"
-          } catch {
-            # Si falla, iniciar de forma normal
-            Start-VM -Name $VmName -ErrorAction Stop | Out-Null
-            Write-Host "✓ VM iniciada localmente"
+          # Esperar a que el ClusterGroup esté disponible (máx 30 seg)
+          $clusterGroup = $null
+          for ($i = 1; $i -le 15; $i++) {
+            $clusterGroup = Get-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue
+            if ($clusterGroup) { break }
+            Write-Host "  Esperando ClusterGroup... intento $i/15"
+            Start-Sleep -Seconds 2
+          }
+
+          if (-not $clusterGroup) {
+            throw "El ClusterGroup '$VmName' no apareció tras registrar la VM en el cluster."
+          }
+
+          Write-Host "✓ ClusterGroup detectado: Estado=$($clusterGroup.State), Nodo=$($clusterGroup.OwnerNode)"
+
+          # ----------------------------------------------------------------
+          # 15. Iniciar VM SIEMPRE a través del Failover Cluster
+          # ----------------------------------------------------------------
+          Write-Host "`nIniciando VM a través del Failover Cluster..."
+
+          if ($clusterGroup.State -ne 'Online') {
+            try {
+              Start-ClusterGroup -Name $VmName -ErrorAction Stop | Out-Null
+
+              # Esperar hasta que quede Online (máx 60 seg)
+              $timeout  = 30
+              $elapsed  = 0
+              $interval = 2
+              do {
+                Start-Sleep -Seconds $interval
+                $elapsed     += $interval
+                $clusterGroup = Get-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue
+                Write-Host "  Estado cluster: $($clusterGroup.State) ($elapsed s)"
+              } while ($clusterGroup.State -notin @('Online','Failed') -and $elapsed -lt $timeout)
+
+              if ($clusterGroup.State -eq 'Online') {
+                Write-Host "✓ VM iniciada correctamente a través del cluster"
+              } elseif ($clusterGroup.State -eq 'Failed') {
+                throw "El ClusterGroup entró en estado 'Failed'. Revisa el Event Viewer del nodo $($clusterGroup.OwnerNode)."
+              } else {
+                Write-Host "⚠ La VM no alcanzó estado Online en $timeout segundos (estado: $($clusterGroup.State))"
+              }
+            } catch {
+              throw "Error al iniciar VM en cluster: $($_.Exception.Message)"
+            }
+          } else {
+            Write-Host "La VM ya estaba en estado Online en el cluster"
           }
 
           Write-Host "`n=========================================="
-          Write-Host "✓ VM creada exitosamente en cluster"
+          Write-Host "✓ VM creada y registrada en Failover Cluster"
           Write-Host "=========================================="
           Write-Host "VM:           $VmName"
-          Write-Host "CSV:          $bestVolume"
+          Write-Host "CSV:          $selectedCsv"
           Write-Host "VHD:          $vhdPath"
-          Write-Host "Estado:       Highly Available (Cluster)"
+          Write-Host "Cluster:      $($cluster.Name)"
+          Write-Host "Nodo actual:  $($clusterGroup.OwnerNode)"
+          Write-Host "Estado:       $($clusterGroup.State)"
           Write-Host "=========================================="
 
         parameters:
