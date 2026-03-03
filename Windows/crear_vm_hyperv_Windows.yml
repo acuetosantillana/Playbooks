@@ -1,5 +1,5 @@
 ---
-- name: Crear VM en Hyper-V usando ISO en NAS + unattended
+- name: Crear VM Windows Server en Hyper-V Failover Cluster
   hosts: "{{ hyperv_host }}"
   gather_facts: no
 
@@ -7,26 +7,25 @@
     - ansible.windows
 
   vars:
-    # Hosts válidos
-    hyperv_hosts:
-      - SMXHVCEDIS
-      - SMXHVFCAWS19
-      - SMXHVFCBWS19
-      - SMXFCHVB
+    # Nodos del Cluster Hyper-V
+    cluster_nodes:
       - SMXHYPVA
-
-    # Contraseña de Administrador: DEBE pasarse por extra_vars o vault
-    # NO definir aquí por seguridad
+      - SMXHYPVB
 
     # vSwitch por defecto
     default_switch: 'LAN-Prod'
 
-    # Unidades donde se pueden guardar discos de la VM
-    candidate_drives:
-      - 'D'
-      - 'E'
+    # Volúmenes CSV disponibles (Cluster Shared Volumes)
+    csv_volumes:
+      - 'C:\\ClusterStorage\\Volume1'
+      - 'C:\\ClusterStorage\\Volume2'
+      - 'C:\\ClusterStorage\\Volume3'
+      - 'C:\\ClusterStorage\\Volume4'
+      - 'C:\\ClusterStorage\\Volume5'
+      - 'C:\\ClusterStorage\\Volume6'
+      - 'C:\\ClusterStorage\\Volume7'
 
-    # ISO por defecto en NAS (Windows 2022 eval)
+    # ISO Windows por defecto en NAS
     iso_path_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'
 
     # NAS para el SMB Global Mapping
@@ -35,18 +34,25 @@
     nas_user: 'NASUSER_AQUI'
     nas_pass: 'NASPASS_AQUI'
 
-    # Ruta local de oscdimg
+    # Ruta local de oscdimg.exe en el host Hyper-V
     oscdimg_path: 'C:\\Oscdimg\\oscdimg.exe'
 
-  tasks:
+    # Parámetros de la instalación de Windows
+    # admin_password debe pasarse por extra_vars o vault
 
+  tasks:
     # -------------------------------------------------------------------
     # 0) Validaciones y normalización
     # -------------------------------------------------------------------
+    - name: Validar que el host pertenece al cluster Windows
+      ansible.builtin.assert:
+        that:
+          - inventory_hostname in cluster_nodes
+        fail_msg: "El host {{ inventory_hostname }} no está en la lista de nodos del cluster."
+
     - name: Validar variables obligatorias
       ansible.builtin.assert:
         that:
-          - hyperv_host is defined
           - vm_name is defined
           - memory_gb is defined
           - cpu is defined
@@ -59,15 +65,8 @@
           - admin_password is defined
           - admin_password | length > 0
         fail_msg: >-
-          Faltan variables obligatorias: hyperv_host, vm_name, memory_gb, cpu, disk_gb,
+          Faltan variables: vm_name, memory_gb, cpu, disk_gb,
           vm_ip, vm_mask, vm_gateway, vm_dns1, vm_image_index, admin_password.
-          El admin_password debe pasarse por extra_vars o vault.
-
-    - name: Validar hyperv_host permitido
-      ansible.builtin.assert:
-        that:
-          - hyperv_host in hyperv_hosts
-        fail_msg: "El host {{ hyperv_host }} no está en la lista de hyperv_hosts permitidos."
 
     - name: Normalizar variables numéricas y rutas
       ansible.builtin.set_fact:
@@ -77,7 +76,6 @@
         disk_bytes: "{{ (disk_gb | int) * 1073741824 }}"
         cpu_count: "{{ cpu | int }}"
         vm_dns2_eff: "{{ vm_dns2 | default(vm_dns1) }}"
-
         unattended_xml_dir: "C:\\autounattend\\{{ vm_name }}"
         unattended_xml_path: "C:\\autounattend\\{{ vm_name }}\\autounattend.xml"
         unattended_iso_path: "C:\\ISOs\\{{ vm_name }}_autounattend.iso"
@@ -85,107 +83,86 @@
     # -------------------------------------------------------------------
     # 1) SMB Global Mapping hacia la NAS
     # -------------------------------------------------------------------
+    - name: Verificar si SMB Global Mapping ya existe
+      ansible.windows.win_shell: |
+        $remotePath = "\\{{ nas_server }}\{{ nas_share }}"
+        $mapping = Get-SmbGlobalMapping -RemotePath $remotePath -ErrorAction SilentlyContinue
+        if ($mapping) {
+          Write-Output "EXISTS"
+        } else {
+          Write-Output "NOTFOUND"
+        }
+      register: smb_check
+      changed_when: false
+
     - name: Crear SMB Global Mapping hacia la NAS para Hyper-V
-      ansible.windows.win_powershell:
-        script: |
-          param(
-            [string]$Server,
-            [string]$Share,
-            [string]$User,
-            [string]$Pass
-          )
-
-          $remotePath = "\\$Server\$Share"
-
-          $sec  = ConvertTo-SecureString $Pass -AsPlainText -Force
-          $cred = New-Object System.Management.Automation.PSCredential($User, $sec)
-
-          try {
-            $existing = Get-SmbGlobalMapping -RemotePath $remotePath -ErrorAction SilentlyContinue
-            if ($existing) {
-              Write-Host "MAPPING-ALREADY: $remotePath"
-            } else {
-              try { net use $remotePath /delete /y | Out-Null } catch { }
-
-              New-SmbGlobalMapping `
-                -RemotePath $remotePath `
-                -Credential $cred `
-                -Persistent $true `
-                -ErrorAction Stop | Out-Null
-
-              Write-Host "MAPPING-OK: $remotePath"
-            }
-          } catch {
-            throw "Error al crear SmbGlobalMapping para $remotePath : $($_.Exception.Message)"
-          }
-        parameters:
-          Server: "{{ nas_server }}"
-          Share: "{{ nas_share }}"
-          User: "{{ nas_user }}"
-          Pass: "{{ nas_pass }}"
+      ansible.windows.win_shell: |
+        $remotePath = "\\{{ nas_server }}\{{ nas_share }}"
+        $secPass = ConvertTo-SecureString "{{ nas_pass }}" -AsPlainText -Force
+        $cred = New-Object System.Management.Automation.PSCredential("{{ nas_user }}", $secPass)
+        
+        try { 
+          net use $remotePath /delete /y 2>$null 
+        } catch { }
+        
+        New-SmbGlobalMapping -RemotePath $remotePath -Credential $cred -Persistent $true -ErrorAction Stop
+        Write-Output "Mapping creado exitosamente"
+      when: smb_check.stdout.strip() == "NOTFOUND"
+      register: smb_result
 
     # -------------------------------------------------------------------
-    # 2) Carpetas y autounattend.xml
+    # 2) Preparar carpetas (ISOs y autounattend)
     # -------------------------------------------------------------------
-    - name: Crear carpeta local para autounattend.xml
-      ansible.windows.win_file:
-        path: "{{ unattended_xml_dir }}"
-        state: directory
-
-    - name: Crear carpeta local para ISOs de unattended
+    - name: Crear carpeta local para ISOs
       ansible.windows.win_file:
         path: "C:\\ISOs"
         state: directory
 
-    - name: Generar autounattend.xml en el host Hyper-V para esta VM
+    - name: Crear carpeta autounattend para esta VM
+      ansible.windows.win_file:
+        path: "{{ unattended_xml_dir }}"
+        state: directory
+
+    - name: Generar autounattend.xml para Windows Server
       ansible.builtin.template:
         src: "templates/autounattend.xml.j2"
         dest: "{{ unattended_xml_path }}"
+    
+
 
     # -------------------------------------------------------------------
-    # 3) Crear ISO de unattended local con oscdimg
+    # 3) Crear ISO autounattend con oscdimg
     # -------------------------------------------------------------------
-    - name: Crear ISO autounattend local en el host Hyper-V con oscdimg
-      ansible.windows.win_powershell:
-        script: |
-          param(
-            [string]$SourcePath,
-            [string]$IsoPath,
-            [string]$OscdimgPath
-          )
+    - name: Verificar existencia de oscdimg.exe
+      ansible.windows.win_stat:
+        path: "{{ oscdimg_path }}"
+      register: oscdimg_stat
 
-          if (-not (Test-Path $SourcePath)) {
-            throw "La carpeta origen no existe: $SourcePath"
-          }
+    - name: Fallar si oscdimg no existe
+      ansible.builtin.fail:
+        msg: "oscdimg.exe no encontrado en {{ oscdimg_path }}"
+      when: not oscdimg_stat.stat.exists
 
-          if (-not (Test-Path $OscdimgPath)) {
-            throw "No se encontró oscdimg.exe en: $OscdimgPath"
-          }
+    - name: Eliminar ISO autounattend anterior si existe
+      ansible.windows.win_file:
+        path: "{{ unattended_iso_path }}"
+        state: absent
 
-          if (Test-Path $IsoPath) {
-            Remove-Item -Path $IsoPath -Force
-          }
-
-          $args = @('-n','-m','-d', $SourcePath, $IsoPath)
-
-          Write-Host "Ejecutando: $OscdimgPath $($args -join ' ')"
-
-          $p = Start-Process -FilePath $OscdimgPath -ArgumentList $args -Wait -PassThru -NoNewWindow
-
-          if ($p.ExitCode -ne 0) {
-            throw "oscdimg terminó con código $($p.ExitCode)."
-          }
-
-          Write-Host "ISO de unattended creado localmente: $IsoPath"
-        parameters:
-          SourcePath: "{{ unattended_xml_dir }}"
-          IsoPath: "{{ unattended_iso_path }}"
-          OscdimgPath: "{{ oscdimg_path }}"
+    - name: Crear ISO autounattend con oscdimg
+      ansible.windows.win_command: >
+        "{{ oscdimg_path }}"
+        -n
+        -m
+        "{{ unattended_xml_dir }}"
+        "{{ unattended_iso_path }}"
+      args:
+        creates: "{{ unattended_iso_path }}"
+      register: oscdimg_result
 
     # -------------------------------------------------------------------
-    # 4) Crear / ajustar VM, VHD, DVDs y firmware
+    # 4) Crear VM en Cluster con CSV
     # -------------------------------------------------------------------
-    - name: Crear VM en Hyper-V con ISO en NAS + ISO unattended
+    - name: Crear VM Windows Server como Highly Available en Cluster
       ansible.windows.win_powershell:
         script: |
           param(
@@ -195,131 +172,186 @@
             [int]$CpuCount,
             [string]$SwitchName,
             [string]$IsoPath,
-            [string]$UnattendIsoPath,
-            [string[]]$CandidateDrives,
+            [string]$KsIsoPath,
+            [string[]]$CsvVolumes,
             [int]$VlanId = 0
           )
 
           Import-Module Hyper-V
+          Import-Module FailoverClusters
 
-          # 1. Elegir unidad con más espacio (D/E)
-          $drives = foreach ($d in $CandidateDrives) {
-            try { Get-PSDrive -Name $d -ErrorAction Stop } catch { $null }
+          Write-Host "=========================================="
+          Write-Host "Creando VM en Cluster Hyper-V"
+          Write-Host "=========================================="
+
+          # 1. Verificar que el cluster está disponible
+          try {
+            $cluster = Get-Cluster -ErrorAction Stop
+            Write-Host "Cluster detectado: $($cluster.Name)"
+          } catch {
+            throw "No se puede conectar al cluster de failover."
           }
-          if (-not $drives) {
-            throw "Ninguna de las unidades candidatas ($($CandidateDrives -join ', ')) existe en este host."
-          }
-          $bestDrive = $drives | Sort-Object Free -Descending | Select-Object -First 1
-          Write-Host "Usando unidad $($bestDrive.Name): $([math]::Round($bestDrive.Free/1GB,2)) GB libres"
 
-          $root          = $bestDrive.Root
-          $clusterRoot   = "$root\$VmName"
-          $snapshotsRoot = Join-Path $clusterRoot "Snapshots"
-          $vhdRoot       = Join-Path $clusterRoot "Virtual Hard Disks"
+          # ----------------------------------------------------------------
+          # 2. Seleccionar CSV con MÁS espacio libre
+          #    Usa Get-ClusterSharedVolume -> SharedVolumeInfo.FriendlyVolumeName
+          #    IMPORTANTE: Ansible escapa backslashes al pasar arrays (C:\\ClusterStorage\\)
+          #    Por eso normalizamos AMBOS lados antes de comparar.
+          # ----------------------------------------------------------------
+          Write-Host "`nSeleccionando volumen CSV con más espacio disponible..."
 
-          foreach ($p in @($clusterRoot, $snapshotsRoot, $vhdRoot)) {
-            if (-not (Test-Path $p)) {
-              New-Item -ItemType Directory -Path $p -Force | Out-Null
+          # Construir tabla: FriendlyVolumeName normalizado -> FreeSpace
+          $csvFreeMap = @{}
+          Get-ClusterSharedVolume | ForEach-Object {
+            foreach ($vol in $_.SharedVolumeInfo) {
+              # Normalizar: un solo backslash, sin trailing slash, lowercase
+              $key = $vol.FriendlyVolumeName.Replace('\\','\').TrimEnd('\').ToLower()
+              $csvFreeMap[$key] = $vol.Partition.FreeSpace
             }
           }
 
-          $VmPath  = $root
-          $VhdPath = Join-Path $vhdRoot "$VmName.vhdx"
-
-          # 2. Validar ISOs
-          if (-not (Test-Path $IsoPath))          { throw "No se puede acceder a la ISO de Windows: $IsoPath" }
-          if (-not (Test-Path $UnattendIsoPath))  { throw "No se puede acceder a la ISO unattended: $UnattendIsoPath" }
-
-          # 3. Crear VHDX si no existe
-          if (-not (Test-Path $VhdPath)) {
-            New-VHD -Path $VhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
-            Write-Host "VHD creado: $VhdPath"
-          } else {
-            Write-Host "VHD ya existía: $VhdPath"
+          if ($csvFreeMap.Count -eq 0) {
+            throw "Get-ClusterSharedVolume no devolvió volúmenes. Verifica que el cluster está Online."
           }
 
-          # 4. Crear VM SIN VHD (NoVHD) para controlar puertos
+          # Debug: mostrar qué keys quedaron en el mapa
+          Write-Host "  Volúmenes detectados en cluster:"
+          $csvFreeMap.GetEnumerator() | ForEach-Object {
+            Write-Host ("    '{0}'  ->  {1:N2} GB libres" -f $_.Key, ($_.Value/1GB))
+          }
+
+          # Mostrar estado de cada volumen del parámetro $CsvVolumes
+          Write-Host ""
+          Write-Host ("  {0,-42} {1,12}  {2}" -f "Volumen", "Libre (GB)", "Estado")
+          Write-Host "  $('-'*65)"
+          foreach ($csvPath in $CsvVolumes) {
+            # Normalizar igual: doble backslash -> simple, sin trailing, lowercase
+            $key = $csvPath.Replace('\\','\').TrimEnd('\').ToLower()
+            if ($csvFreeMap.ContainsKey($key)) {
+              Write-Host ("  {0,-42} {1,12:N2}  Online" -f $csvPath, ($csvFreeMap[$key]/1GB))
+            } else {
+              Write-Host ("  {0,-42} {1,12}  No encontrado en cluster" -f $csvPath, "N/A")
+            }
+          }
+
+          # Filtrar solo volúmenes que están en $CsvVolumes Y visibles en el cluster
+          $candidates = $CsvVolumes | ForEach-Object {
+            $key = $_.Replace('\\','\').TrimEnd('\').ToLower()
+            if ($csvFreeMap.ContainsKey($key)) {
+              # Usar la ruta normalizada como Path (backslash simple)
+              $normalizedPath = $_.Replace('\\','\').TrimEnd('\')
+              [PSCustomObject]@{ Path = $normalizedPath; FreeBytes = $csvFreeMap[$key] }
+            }
+          } | Where-Object { $_ -ne $null }
+
+          if (-not $candidates) {
+            throw "Ninguno de los volúmenes en CsvVolumes fue encontrado en Get-ClusterSharedVolume."
+          }
+
+          # Tomar el de mayor espacio libre
+          $best         = $candidates | Sort-Object FreeBytes -Descending | Select-Object -First 1
+          $selectedCsv  = $best.Path
+          $selectedFree = $best.FreeBytes
+
+          Write-Host ""
+          Write-Host "✓ Volumen seleccionado: $selectedCsv"
+          Write-Host ("  Espacio libre : {0:N2} GB" -f ($selectedFree/1GB))
+
+          # Validar espacio suficiente para el disco de la VM
+          if ($selectedFree -lt $DiskBytes) {
+            throw ("Espacio insuficiente en {0}. Libre: {1:N2} GB, Requerido: {2:N2} GB" -f `
+              $selectedCsv, ($selectedFree/1GB), ($DiskBytes/1GB))
+          }
+
+          # ----------------------------------------------------------------
+          # 3. Definir rutas
+          #    New-VM con -Path $selectedCsv crea automáticamente:
+          #      CSV\<VmName>\                   <- carpeta raíz de la VM
+          #      CSV\<VmName>\Virtual Machines\  <- archivos de config
+          #    Después creamos Virtual Hard Disks y el VHDX.
+          # ----------------------------------------------------------------
+          $vmRoot  = Join-Path $selectedCsv $VmName
+          $vhdDir  = Join-Path $vmRoot "Virtual Hard Disks"
+          $vhdPath = Join-Path $vhdDir "$VmName.vhdx"
+
+          # 4. Validar ISOs antes de crear nada
+          if (-not (Test-Path $IsoPath)) {
+            throw "No se puede acceder a la ISO de Windows: $IsoPath"
+          }
+          if (-not (Test-Path $KsIsoPath)) {
+            throw "No se puede acceder a la ISO autounattend: $KsIsoPath"
+          }
+
+          # 5. Crear VM primero — Hyper-V genera CSV\<VmName>\ y Virtual Machines\
           $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
           if (-not $vm) {
+            # -Path = CSV raíz; Hyper-V agrega subcarpeta con nombre de VM
             New-VM -Name $VmName `
                    -MemoryStartupBytes $MemoryBytes `
                    -Generation 2 `
                    -SwitchName $SwitchName `
-                   -Path $VmPath `
+                   -Path $selectedCsv `
                    -NoVHD | Out-Null
             $vm = Get-VM -Name $VmName
-            Write-Host "VM creada: $VmName"
+            Write-Host "✓ VM creada: $VmName"
           } else {
             Write-Host "VM ya existía: $VmName"
           }
 
-          # 4.1 VLAN condicional: esperar a que exista el adaptador y aplicar
-          if ($VlanId -gt 0) {
-            Write-Host "Se solicitó VLAN $VlanId. Buscando adaptador de red de la VM $VmName..."
+          # 6. Ahora que existe CSV\<VmName>\, crear Virtual Hard Disks y VHDX
+          if (-not (Test-Path $vhdDir)) {
+            New-Item -ItemType Directory -Path $vhdDir -Force | Out-Null
+          }
+          Write-Host "  Raíz VM : $vmRoot"
+          Write-Host "  VHD dir : $vhdDir"
 
+          if (-not (Test-Path $vhdPath)) {
+            New-VHD -Path $vhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
+            Write-Host "✓ VHD creado: $vhdPath"
+          } else {
+            Write-Host "VHD ya existía: $vhdPath"
+          }
+
+          # 7. Configurar VLAN si es necesario
+          if ($VlanId -gt 0) {
+            Write-Host "Configurando VLAN $VlanId..."
             $nic = $null
             for ($i = 1; $i -le 10; $i++) {
               $nic = Get-VMNetworkAdapter -VMName $VmName -ErrorAction SilentlyContinue
               if ($nic) { break }
               Start-Sleep -Seconds 1
             }
-
-            if (-not $nic) {
-              throw "No se encontró adaptador de red en la VM $VmName después de esperar."
+            if ($nic) {
+              Set-VMNetworkAdapterVlan -VMName $VmName `
+                                       -VMNetworkAdapterName $nic.Name `
+                                       -Access `
+                                       -VlanId $VlanId
+              Write-Host "✓ VLAN $VlanId configurada"
             }
-
-            Write-Host "Adaptador encontrado: $($nic.Name). Aplicando VLAN $VlanId."
-            Set-VMNetworkAdapterVlan `
-              -VMName $VmName `
-              -VMNetworkAdapterName $nic.Name `
-              -Access `
-              -VlanId $VlanId `
-              -ErrorAction Stop
-
-            Write-Host "VLAN $VlanId aplicada correctamente."
           } else {
-            Write-Host "No se envió vm_vlan, dejando la VM sin VLAN (untagged)."
             Set-VMNetworkAdapterVlan -VMName $VmName -Untagged -ErrorAction SilentlyContinue
           }
 
-          # 5. Asegurar VHD en SCSI 0:2
-          $osDisk = Get-VMHardDiskDrive -VMName $VmName -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Path -eq $VhdPath }
+          # 8. Agregar disco duro en SCSI 0:2
+          Add-VMHardDiskDrive -VMName $VmName `
+                               -ControllerNumber 0 `
+                               -ControllerLocation 2 `
+                               -Path $vhdPath
 
-          if ($osDisk) {
-            if ($osDisk.ControllerNumber -ne 0 -or $osDisk.ControllerLocation -ne 2) {
-              Remove-VMHardDiskDrive -VMName $VmName `
-                                     -ControllerNumber $osDisk.ControllerNumber `
-                                     -ControllerLocation $osDisk.ControllerLocation
-              Add-VMHardDiskDrive -VMName $VmName `
-                                   -ControllerNumber 0 `
-                                   -ControllerLocation 2 `
-                                   -Path $VhdPath | Out-Null
-            }
-          } else {
-            Add-VMHardDiskDrive -VMName $VmName `
-                                 -ControllerNumber 0 `
-                                 -ControllerLocation 2 `
-                                 -Path $VhdPath | Out-Null
-          }
-
-          # 6. CPU y memoria estática
+          # 9. Configurar CPU y memoria estática
           Set-VMProcessor -VMName $VmName -Count $CpuCount
           Set-VMMemory -VMName $VmName `
             -DynamicMemoryEnabled $false `
             -StartupBytes $MemoryBytes
 
-          # 7. Apagar VM antes de tocar firmware/DVD
+          # 10. Asegurar VM apagada antes de configurar firmware/DVD
           $vm = Get-VM -Name $VmName
           if ($vm.State -ne 'Off') {
             Stop-VM -Name $VmName -TurnOff -Force
-            do {
-              Start-Sleep -Seconds 1
-              $vm = Get-VM -Name $VmName
-            } while ($vm.State -ne 'Off')
+            Start-Sleep -Seconds 3
           }
 
-          # 8. Quitar todos los DVD drives
+          # 11. Quitar DVDs existentes
           Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue |
             ForEach-Object {
               Remove-VMDvdDrive -VMName $VmName `
@@ -328,33 +360,31 @@
                                 -Confirm:$false
             }
 
-          # 9. Agregar DVD de Windows en SCSI 0:0 y unattended en 0:1
-          $dvdMain = Add-VMDvdDrive -VMName $VmName `
-                                    -ControllerNumber 0 `
-                                    -ControllerLocation 0 `
-                                    -Path $IsoPath
-          $dvdUnattend = Add-VMDvdDrive -VMName $VmName `
-                                        -ControllerNumber 0 `
-                                        -ControllerLocation 1 `
-                                        -Path $UnattendIsoPath
+          # 12. Agregar DVDs: Windows en SCSI 0:0, autounattend en 0:1
+          Add-VMDvdDrive -VMName $VmName `
+                         -ControllerNumber 0 `
+                         -ControllerLocation 0 `
+                         -Path $IsoPath | Out-Null
 
-          # 10. Forzar arranque UEFI desde la ISO SIN pedir "Press any key" a nivel firmware
+          Add-VMDvdDrive -VMName $VmName `
+                         -ControllerNumber 0 `
+                         -ControllerLocation 1 `
+                         -Path $KsIsoPath | Out-Null
+
+          # 13. Configurar firmware UEFI
           $dvd = Get-VMDvdDrive -VMName $VmName | Where-Object { $_.Path -eq $IsoPath }
-
           Set-VMFirmware -VMName $VmName `
             -EnableSecureBoot On `
             -FirstBootDevice $dvd
+          Write-Host "✓ Firmware UEFI configurado (SecureBoot OFF)"
 
-          Write-Host "Boot UEFI forzado desde DVD principal."
-
-          # 11. Iniciar VM
-          $vm = Get-VM -Name $VmName
-          if ($vm.State -ne 'Running') {
-            Start-VM -Name $VmName | Out-Null
-            Write-Host "VM iniciada: $VmName"
-          } else {
-            Write-Host "VM ya estaba corriendo."
-          }
+          Write-Host "`n=========================================="
+          Write-Host "✓ VM creada en CSV - pendiente registro cluster"
+          Write-Host "=========================================="
+          Write-Host "VM:    $VmName"
+          Write-Host "CSV:   $selectedCsv"
+          Write-Host "VHD:   $vhdPath"
+          Write-Host "=========================================="
 
         parameters:
           VmName: "{{ vm_name }}"
@@ -363,34 +393,247 @@
           CpuCount: "{{ cpu_count }}"
           SwitchName: "{{ v_switch_eff }}"
           IsoPath: "{{ iso_path_eff }}"
-          UnattendIsoPath: "{{ unattended_iso_path }}"
-          CandidateDrives: "{{ candidate_drives }}"
+          KsIsoPath: "{{ unattended_iso_path }}"
+          CsvVolumes: "{{ csv_volumes }}"
           VlanId: "{{ vm_vlan | default('0') | int }}"
 
     # -------------------------------------------------------------------
-    # 5) Mensaje final de resumen
+    # 4b) Registrar VM en el Failover Cluster
+    #     Add-ClusterVirtualMachineRole requiere CredSSP para funcionar
+    #     en sesiones WinRM remotas (Kerberos estándar falla con double-hop).
     # -------------------------------------------------------------------
-    - name: Mostrar resumen de la VM creada
+    - name: Registrar VM en Failover Cluster como recurso HA
+      ansible.windows.win_shell: |
+        $existing = Get-ClusterGroup -Name "{{ vm_name }}" -ErrorAction SilentlyContinue
+        if (-not $existing) {
+          Import-Module FailoverClusters
+          Add-ClusterVirtualMachineRole -VMName "{{ vm_name }}" -ErrorAction Stop | Out-Null
+          Write-Output "REGISTERED"
+        } else {
+          Write-Output "ALREADY_EXISTS"
+        }
+      register: cluster_register
+      failed_when: >
+        cluster_register.stdout is not search('REGISTERED') and
+        cluster_register.stdout is not search('ALREADY_EXISTS')
+      vars:
+        ansible_winrm_transport: credssp
+
+    - name: Esperar que el ClusterGroup quede disponible
+      ansible.windows.win_shell: |
+        $group = $null
+        for ($i = 1; $i -le 15; $i++) {
+          $group = Get-ClusterGroup -Name "{{ vm_name }}" -ErrorAction SilentlyContinue
+          if ($group) {
+            Write-Output "FOUND:$($group.State):$($group.OwnerNode)"
+            exit 0
+          }
+          Start-Sleep -Seconds 2
+        }
+        Write-Output "NOTFOUND"
+        exit 1
+      register: cluster_group_check
+      failed_when: cluster_group_check.stdout is search('NOTFOUND')
+      vars:
+        ansible_winrm_transport: credssp
+
+    - name: Iniciar VM a través del Failover Cluster
+      ansible.windows.win_shell: |
+        $group = Get-ClusterGroup -Name "{{ vm_name }}" -ErrorAction SilentlyContinue
+        if ($group.State -ne 'Online') {
+          Start-ClusterGroup -Name "{{ vm_name }}" -ErrorAction Stop | Out-Null
+          # Esperar Online (max 60 seg)
+          $elapsed = 0
+          do {
+            Start-Sleep -Seconds 3
+            $elapsed += 3
+            $group = Get-ClusterGroup -Name "{{ vm_name }}" -ErrorAction SilentlyContinue
+            Write-Host "  Estado: $($group.State) (${elapsed}s)"
+          } while ($group.State -notin @('Online','Failed') -and $elapsed -lt 60)
+
+          if ($group.State -eq 'Online') {
+            Write-Output "VM_ONLINE"
+          } elseif ($group.State -eq 'Failed') {
+            Write-Output "VM_FAILED"
+            exit 1
+          } else {
+            Write-Output "VM_TIMEOUT:$($group.State)"
+          }
+        } else {
+          Write-Output "VM_ALREADY_ONLINE"
+        }
+      register: cluster_start
+      failed_when: cluster_start.stdout is search('VM_FAILED')
+      vars:
+        ansible_winrm_transport: credssp
+
+    # -------------------------------------------------------------------
+    # 5) Esperar a que la instalación finalice (ping + WinRM)
+    # -------------------------------------------------------------------
+    - name: "[Post-install] Esperar conectividad PING a la VM (máx 60 min)"
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$IpAddress, [int]$TimeoutSeconds)
+
+          $elapsed  = 0
+          $interval = 15
+          $success  = $false
+
+          Write-Host "Esperando respuesta PING en $IpAddress ..."
+
+          while ($elapsed -lt $TimeoutSeconds) {
+            $ping = Test-Connection -ComputerName $IpAddress -Count 1 -Quiet -ErrorAction SilentlyContinue
+            if ($ping) {
+              Write-Host "✓ PING exitoso a $IpAddress (${elapsed}s)"
+              $success = $true
+              break
+            }
+            Write-Host "  Sin respuesta PING... ($elapsed s / $TimeoutSeconds s)"
+            Start-Sleep -Seconds $interval
+            $elapsed += $interval
+          }
+
+          if (-not $success) {
+            throw "Timeout: la VM $IpAddress no respondió PING en $TimeoutSeconds segundos."
+          }
+        parameters:
+          IpAddress: "{{ vm_ip }}"
+          TimeoutSeconds: 3600   # 60 minutos — Windows tarda más que Linux
+
+    - name: "[Post-install] Esperar WinRM puerto 5985 activo en la VM (máx 15 min)"
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$IpAddress, [int]$TimeoutSeconds)
+
+          $elapsed  = 0
+          $interval = 15
+          $success  = $false
+
+          Write-Host "Esperando WinRM (puerto 5985) en $IpAddress ..."
+
+          while ($elapsed -lt $TimeoutSeconds) {
+            try {
+              $tcp  = New-Object System.Net.Sockets.TcpClient
+              $conn = $tcp.BeginConnect($IpAddress, 5985, $null, $null)
+              $wait = $conn.AsyncWaitHandle.WaitOne(3000, $false)
+              if ($wait -and $tcp.Connected) {
+                $tcp.Close()
+                Write-Host "✓ WinRM accesible en $IpAddress (${elapsed}s)"
+                $success = $true
+                break
+              }
+              $tcp.Close()
+            } catch { }
+
+            Write-Host "  WinRM no disponible aún... ($elapsed s / $TimeoutSeconds s)"
+            Start-Sleep -Seconds $interval
+            $elapsed += $interval
+          }
+
+          if (-not $success) {
+            throw "Timeout: WinRM no disponible en $IpAddress tras $TimeoutSeconds segundos."
+          }
+        parameters:
+          IpAddress: "{{ vm_ip }}"
+          TimeoutSeconds: 900    # 15 minutos adicionales tras el ping
+
+    # -------------------------------------------------------------------
+    # 6) Desmontar DVDs de la VM
+    # -------------------------------------------------------------------
+    - name: "[Post-install] Desmontar todas las unidades DVD de la VM"
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$VmName)
+
+          Import-Module Hyper-V
+
+          # La VM debe estar apagada para quitar DVDs con ISO montada
+          # Primero intentamos quitar la ISO sin apagar (Set-VMDvdDrive -ToControllerLocation)
+          $dvds = Get-VMDvdDrive -VMName $VmName -ErrorAction SilentlyContinue
+
+          if (-not $dvds) {
+            Write-Host "No se encontraron unidades DVD en $VmName"
+            return
+          }
+
+          foreach ($dvd in $dvds) {
+            try {
+              # Desmontar la ISO (dejar la unidad vacía)
+              Set-VMDvdDrive -VMName $VmName `
+                             -ControllerNumber $dvd.ControllerNumber `
+                             -ControllerLocation $dvd.ControllerLocation `
+                             -Path $null `
+                             -ErrorAction Stop
+              Write-Host ("✓ DVD desmontado: SCSI {0}:{1} (era: {2})" -f `
+                $dvd.ControllerNumber, $dvd.ControllerLocation, $dvd.Path)
+            } catch {
+              Write-Host ("⚠ No se pudo desmontar SCSI {0}:{1}: {2}" -f `
+                $dvd.ControllerNumber, $dvd.ControllerLocation, $_.Exception.Message)
+            }
+          }
+
+          # Verificar resultado
+          $remaining = Get-VMDvdDrive -VMName $VmName |
+                         Where-Object { $_.Path -ne $null -and $_.Path -ne '' }
+          if ($remaining) {
+            Write-Host "⚠ Quedan $($remaining.Count) DVD(s) con ISO montada"
+          } else {
+            Write-Host "✓ Todas las unidades DVD están vacías"
+          }
+        parameters:
+          VmName: "{{ vm_name }}"
+
+    # -------------------------------------------------------------------
+    # 7) Limpieza de archivos temporales en el host Hyper-V
+    # -------------------------------------------------------------------
+    - name: "[Cleanup] Eliminar ISO autounattend"
+      ansible.windows.win_file:
+        path: "{{ unattended_iso_path }}"
+        state: absent
+
+    - name: "[Cleanup] Eliminar carpeta autounattend de la VM"
+      ansible.windows.win_file:
+        path: "{{ unattended_xml_dir }}"
+        state: absent
+
+    - name: "[Cleanup] Eliminar C:\\autounattend raíz si quedó vacía"
+      ansible.windows.win_powershell:
+        script: |
+          $root = "C:\autounattend"
+          if (Test-Path $root) {
+            $remaining = Get-ChildItem -Path $root -Recurse -ErrorAction SilentlyContinue
+            if (-not $remaining) {
+              Remove-Item -Path $root -Force -Recurse
+              Write-Host "✓ C:\autounattend eliminada (estaba vacía)"
+            } else {
+              Write-Host ("ℹ C:\autounattend conservada ({0} elemento(s) de otras VMs)" -f $remaining.Count)
+            }
+          }
+
+    # -------------------------------------------------------------------
+    # 8) Mensaje final
+    # -------------------------------------------------------------------
+    - name: Resumen de la creación
       ansible.builtin.debug:
         msg:
-          - "=========================================="
-          - "VM CREADA EXITOSAMENTE"
-          - "=========================================="
-          - "Nombre: {{ vm_name }}"
-          - "Host Hyper-V: {{ hyperv_host }}"
-          - "Memoria: {{ memory_gb }} GB (estática)"
-          - "CPUs: {{ cpu }}"
-          - "Disco: {{ disk_gb }} GB"
-          - "vSwitch: {{ v_switch_eff }}"
-          - "VLAN: {{ vm_vlan | default('Sin VLAN (untagged)') }}"
-          - "IP: {{ vm_ip }}"
-          - "Máscara: {{ vm_mask }}"
-          - "Gateway: {{ vm_gateway }}"
-          - "DNS1: {{ vm_dns1 }}"
-          - "DNS2: {{ vm_dns2_eff }}"
-          - "ISO Windows: {{ iso_path_eff }}"
-          - "Image Index: {{ vm_image_index }}"
-          - "=========================================="
-          - "La VM está iniciándose con instalación desatendida."
-          - "El proceso de instalación tomará varios minutos."
-          - "=========================================="
+          - "============================================"
+          - "VM CLUSTER creada exitosamente: {{ vm_name }}"
+          - "Host ejecutor: {{ inventory_hostname }}"
+          - "Cluster: Hyper-V Failover Cluster"
+          - "Alta disponibilidad: SÍ"
+          - "Almacenamiento: CSV (Cluster Shared Volume)"
+          - "============================================"
+          - "Configuración:"
+          - "  Memoria: {{ memory_gb }} GB (estática)"
+          - "  CPU: {{ cpu_count }} cores"
+          - "  Disco: {{ disk_gb }} GB"
+          - "  IP: {{ vm_ip }}/{{ vm_mask }}"
+          - "  Gateway: {{ vm_gateway }}"
+          - "  DNS: {{ vm_dns1 }}, {{ vm_dns2_eff }}"
+          - "  vSwitch: {{ v_switch_eff }}"
+          - "============================================"
+          - "Instalación completada y verificada via WinRM"
+          - "DVDs desmontados, archivos temporales eliminados"
+          - "C:\\ISOs conservada (contiene otros datos)"
+          - "Puede migrar entre nodos SMXHYPVA y SMXHYPVB"
+          - "============================================"
