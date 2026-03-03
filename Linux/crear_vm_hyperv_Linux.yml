@@ -411,10 +411,9 @@
           VlanId: "{{ vm_vlan | default('0') | int }}"
 
     # -------------------------------------------------------------------
-    # 4b) Registrar VM en el Failover Cluster (win_shell - contexto local)
-    #     Add-ClusterVirtualMachineRole NO funciona en sesión WinRM remota.
-    #     win_shell lanza cmd.exe localmente en el nodo, lo que sí tiene
-    #     los privilegios necesarios para operar el cluster.
+    # 4b) Registrar VM en el Failover Cluster
+    #     Add-ClusterVirtualMachineRole requiere CredSSP para funcionar
+    #     en sesiones WinRM remotas (Kerberos estándar falla con double-hop).
     # -------------------------------------------------------------------
     - name: Registrar VM en Failover Cluster como recurso HA
       ansible.windows.win_shell: |
@@ -430,6 +429,8 @@
       failed_when: >
         cluster_register.stdout is not search('REGISTERED') and
         cluster_register.stdout is not search('ALREADY_EXISTS')
+      vars:
+        ansible_winrm_transport: credssp
 
     - name: Esperar que el ClusterGroup quede disponible
       ansible.windows.win_shell: |
@@ -446,6 +447,8 @@
         exit 1
       register: cluster_group_check
       failed_when: cluster_group_check.stdout is search('NOTFOUND')
+      vars:
+        ansible_winrm_transport: credssp
 
     - name: Iniciar VM a través del Failover Cluster
       ansible.windows.win_shell: |
@@ -474,6 +477,8 @@
         }
       register: cluster_start
       failed_when: cluster_start.stdout is search('VM_FAILED')
+      vars:
+        ansible_winrm_transport: credssp
 
     # -------------------------------------------------------------------
     # 5) Esperar a que la instalación finalice (ping + SSH)
