@@ -281,20 +281,17 @@
           }
 
           # ----------------------------------------------------------------
-          # 3. Crear estructura de directorios en CSV
+          # 3. Definir rutas
+          #    New-VM con -Path $selectedCsv crea automáticamente:
+          #      CSV\<VmName>\                   <- carpeta raíz de la VM
+          #      CSV\<VmName>\Virtual Machines\  <- archivos de config
+          #    Después creamos Virtual Hard Disks y el VHDX.
           # ----------------------------------------------------------------
-          $vmRoot = Join-Path $selectedCsv $VmName
-          $vhdPath = Join-Path $vmRoot "Virtual Hard Disks\$VmName.vhdx"
-          $vhdDir  = Split-Path $vhdPath -Parent
+          $vmRoot  = Join-Path $selectedCsv $VmName
+          $vhdDir  = Join-Path $vmRoot "Virtual Hard Disks"
+          $vhdPath = Join-Path $vhdDir "$VmName.vhdx"
 
-          foreach ($dir in @($vmRoot, $vhdDir)) {
-            if (-not (Test-Path $dir)) {
-              New-Item -ItemType Directory -Path $dir -Force | Out-Null
-            }
-          }
-          Write-Host "✓ Estructura de directorios creada en CSV"
-
-          # 4. Validar ISOs
+          # 4. Validar ISOs antes de crear nada
           if (-not (Test-Path $IsoPath)) {
             throw "No se puede acceder a la ISO de Rocky: $IsoPath"
           }
@@ -302,27 +299,34 @@
             throw "No se puede acceder a la ISO Kickstart: $KsIsoPath"
           }
 
-          # 5. Crear VHDX en CSV
-          if (-not (Test-Path $vhdPath)) {
-            New-VHD -Path $vhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
-            Write-Host "✓ VHD creado: $vhdPath"
-          } else {
-            Write-Host "VHD ya existía: $vhdPath"
-          }
-
-          # 6. Crear VM (primero local, luego se hace HA)
+          # 5. Crear VM primero — Hyper-V genera CSV\<VmName>\ y Virtual Machines\
           $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
           if (-not $vm) {
+            # -Path = CSV raíz; Hyper-V agrega subcarpeta con nombre de VM
             New-VM -Name $VmName `
                    -MemoryStartupBytes $MemoryBytes `
                    -Generation 2 `
                    -SwitchName $SwitchName `
-                   -Path $vmRoot `
+                   -Path $selectedCsv `
                    -NoVHD | Out-Null
             $vm = Get-VM -Name $VmName
             Write-Host "✓ VM creada: $VmName"
           } else {
             Write-Host "VM ya existía: $VmName"
+          }
+
+          # 6. Ahora que existe CSV\<VmName>\, crear Virtual Hard Disks y VHDX
+          if (-not (Test-Path $vhdDir)) {
+            New-Item -ItemType Directory -Path $vhdDir -Force | Out-Null
+          }
+          Write-Host "  Raíz VM : $vmRoot"
+          Write-Host "  VHD dir : $vhdDir"
+
+          if (-not (Test-Path $vhdPath)) {
+            New-VHD -Path $vhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
+            Write-Host "✓ VHD creado: $vhdPath"
+          } else {
+            Write-Host "VHD ya existía: $vhdPath"
           }
 
           # 7. Configurar VLAN si es necesario
