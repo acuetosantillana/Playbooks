@@ -437,63 +437,17 @@
       vars:
         ansible_winrm_transport: credssp
 
-    # -------------------------------------------------------------------
-    # 4c) Iniciar VM + saltar "Press any key to boot from CD or DVD"
-    #     El PressKey se lanza como Job nativo de PowerShell DENTRO del
-    #     mismo win_shell que hace Start-ClusterGroup. Sin roundtrip WinRM,
-    #     el Job local corre en paralelo y llega al firmware a tiempo.
-    # -------------------------------------------------------------------
-    - name: Iniciar VM en Cluster y saltar 'Press any key' via PS Job local
+    - name: Iniciar VM a través del Failover Cluster
       ansible.windows.win_shell: |
-        Import-Module FailoverClusters
-        Import-Module Hyper-V
-
-        $VmName = "{{ vm_name }}"
-
-        # Lanzar Job de PowerShell LOCAL que enviará Enter en cuanto la VM arranque
-        # Al ser un Job local (no WinRM), no tiene latencia de red
-        $pressJob = Start-Job -ScriptBlock {
-          param($Name)
-          Import-Module Hyper-V
-
-          # Esperar que la VM salga de Off (máx 30 seg)
-          $elapsed = 0
-          do {
-            Start-Sleep -Milliseconds 200
-            $elapsed += 200
-            $vm = Get-VM -Name $Name -ErrorAction SilentlyContinue
-          } while (($vm -eq $null -or $vm.State -eq 'Off') -and $elapsed -lt 30000)
-
-          $kb = Get-VMKeyboard -VMName $Name -ErrorAction SilentlyContinue
-          if (-not $kb) { return "KEYBOARD_NOT_AVAILABLE" }
-
-          # Enviar Enter durante 20 seg desde que la VM arranca
-          $start = Get-Date
-          $sent  = 0
-          while ((Get-Date) -lt $start.AddSeconds(20)) {
-            try {
-              $kb.PressKey(13)
-              Start-Sleep -Milliseconds 50
-              $kb.ReleaseKey(13)
-              Start-Sleep -Milliseconds 100
-              $sent++
-            } catch { break }
-          }
-          return "SENT:$sent"
-        } -ArgumentList $VmName
-
-        Write-Host "Job PressKey iniciado: $($pressJob.Id)"
-
-        # Ahora arrancar la VM via cluster
-        $group = Get-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue
+        $group = Get-ClusterGroup -Name "{{ vm_name }}" -ErrorAction SilentlyContinue
         if ($group.State -ne 'Online') {
-          Start-ClusterGroup -Name $VmName -ErrorAction Stop | Out-Null
+          Start-ClusterGroup -Name "{{ vm_name }}" -ErrorAction Stop | Out-Null
           $elapsed = 0
           do {
             Start-Sleep -Seconds 3
             $elapsed += 3
-            $group = Get-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue
-            Write-Host "  Estado cluster: $($group.State) (${elapsed}s)"
+            $group = Get-ClusterGroup -Name "{{ vm_name }}" -ErrorAction SilentlyContinue
+            Write-Host "  Estado: $($group.State) (${elapsed}s)"
           } while ($group.State -notin @('Online','Failed') -and $elapsed -lt 60)
 
           if ($group.State -eq 'Online') {
@@ -507,12 +461,6 @@
         } else {
           Write-Output "VM_ALREADY_ONLINE"
         }
-
-        # Esperar resultado del Job PressKey (máx 30 seg adicionales)
-        $pressJob | Wait-Job -Timeout 30 | Out-Null
-        $pressResult = $pressJob | Receive-Job
-        Write-Host "PressKey result: $pressResult"
-        $pressJob | Remove-Job -Force
       register: cluster_start
       failed_when: cluster_start.stdout is search('VM_FAILED')
       vars:
