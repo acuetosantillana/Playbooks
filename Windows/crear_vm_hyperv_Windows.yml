@@ -468,6 +468,51 @@
         ansible_winrm_transport: credssp
 
     # -------------------------------------------------------------------
+    # 4c) Simular tecla Enter para saltar "Press any key to boot from CD"
+    #     El firmware UEFI de Hyper-V muestra este mensaje ~2-4 seg después
+    #     de iniciar la VM. Get-VMKeyboard.PressKey(13) lo salta sin intervención.
+    # -------------------------------------------------------------------
+    - name: Saltar 'Press any key to boot from CD or DVD'
+      ansible.windows.win_shell: |
+        Import-Module Hyper-V
+        $vm = Get-VM -Name "{{ vm_name }}" -ErrorAction SilentlyContinue
+        if (-not $vm) {
+          Write-Output "VM_NOT_FOUND"
+          exit 0
+        }
+
+        # Esperar a que la VM esté en estado Running antes de enviar tecla
+        $elapsed = 0
+        while ($vm.State -ne 'Running' -and $elapsed -lt 30) {
+          Start-Sleep -Seconds 1
+          $elapsed++
+          $vm = Get-VM -Name "{{ vm_name }}"
+        }
+
+        if ($vm.State -ne 'Running') {
+          Write-Output "VM_NOT_RUNNING: $($vm.State)"
+          exit 0
+        }
+
+        # Dar tiempo al firmware para mostrar el mensaje (2-4 segundos)
+        Start-Sleep -Seconds 3
+
+        # Enviar Enter repetidamente durante 5 seg por si el timing varía
+        $kb = Get-VMKeyboard -VMName "{{ vm_name }}" -ErrorAction SilentlyContinue
+        if ($kb) {
+          for ($i = 0; $i -lt 5; $i++) {
+            $kb.PressKey(13)
+            Start-Sleep -Milliseconds 300
+            $kb.ReleaseKey(13)
+            Start-Sleep -Milliseconds 200
+          }
+          Write-Output "KEYPRESS_SENT"
+        } else {
+          Write-Output "KEYBOARD_NOT_AVAILABLE"
+        }
+      register: keypress_result
+
+    # -------------------------------------------------------------------
     # 5) Esperar a que la instalación finalice (ping + WinRM)
     # -------------------------------------------------------------------
     - name: "[Post-install] Esperar conectividad PING a la VM (máx 60 min)"
