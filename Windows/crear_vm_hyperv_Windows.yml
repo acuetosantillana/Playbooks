@@ -469,47 +469,49 @@
 
     # -------------------------------------------------------------------
     # 4c) Simular tecla Enter para saltar "Press any key to boot from CD"
-    #     El firmware UEFI de Hyper-V muestra este mensaje ~2-4 seg después
-    #     de iniciar la VM. Get-VMKeyboard.PressKey(13) lo salta sin intervención.
+    #     La ventana es muy corta (~5 seg). Enviamos Enter en loop agresivo
+    #     desde el momento exacto que la VM arranca hasta 15 seg después.
     # -------------------------------------------------------------------
     - name: Saltar 'Press any key to boot from CD or DVD'
       ansible.windows.win_shell: |
         Import-Module Hyper-V
-        $vm = Get-VM -Name "{{ vm_name }}" -ErrorAction SilentlyContinue
-        if (-not $vm) {
-          Write-Output "VM_NOT_FOUND"
-          exit 0
-        }
 
-        # Esperar a que la VM esté en estado Running antes de enviar tecla
+        $VmName = "{{ vm_name }}"
+
+        # Esperar estado Running (máx 20 seg)
         $elapsed = 0
-        while ($vm.State -ne 'Running' -and $elapsed -lt 30) {
-          Start-Sleep -Seconds 1
-          $elapsed++
-          $vm = Get-VM -Name "{{ vm_name }}"
-        }
+        do {
+          Start-Sleep -Milliseconds 500
+          $elapsed += 500
+          $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
+        } while ($vm.State -ne 'Running' -and $elapsed -lt 20000)
 
         if ($vm.State -ne 'Running') {
           Write-Output "VM_NOT_RUNNING: $($vm.State)"
           exit 0
         }
 
-        # Dar tiempo al firmware para mostrar el mensaje (2-4 segundos)
-        Start-Sleep -Seconds 3
+        $kb = Get-VMKeyboard -VMName $VmName -ErrorAction SilentlyContinue
+        if (-not $kb) {
+          Write-Output "KEYBOARD_NOT_AVAILABLE"
+          exit 0
+        }
 
-        # Enviar Enter repetidamente durante 5 seg por si el timing varía
-        $kb = Get-VMKeyboard -VMName "{{ vm_name }}" -ErrorAction SilentlyContinue
-        if ($kb) {
-          for ($i = 0; $i -lt 5; $i++) {
+        # Enviar Enter en loop agresivo durante 15 seg
+        # La ventana "Press any key" aparece entre 1-8 seg después del boot
+        Write-Output "Enviando Enter durante 15 segundos..."
+        $start = Get-Date
+        $sent  = 0
+        while ((Get-Date) -lt $start.AddSeconds(15)) {
+          try {
             $kb.PressKey(13)
-            Start-Sleep -Milliseconds 300
+            Start-Sleep -Milliseconds 100
             $kb.ReleaseKey(13)
             Start-Sleep -Milliseconds 200
-          }
-          Write-Output "KEYPRESS_SENT"
-        } else {
-          Write-Output "KEYBOARD_NOT_AVAILABLE"
+            $sent++
+          } catch { }
         }
+        Write-Output "KEYPRESS_SENT: $sent veces"
       register: keypress_result
 
     # -------------------------------------------------------------------
