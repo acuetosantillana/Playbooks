@@ -129,6 +129,12 @@
           <Group>Remote Desktop</Group>
           <Profile>all</Profile>
         </FirewallGroup>
+        <!-- Habilitar ICMP (ping) en todos los perfiles desde specialize -->
+        <FirewallGroup wcm:action="add" wcm:keyValue="ICMPv4">
+          <Active>true</Active>
+          <Group>File and Printer Sharing (Echo Request - ICMPv4-In)</Group>
+          <Profile>all</Profile>
+        </FirewallGroup>
       </FirewallGroups>
     </component>
 
@@ -178,26 +184,43 @@
       </OOBE>
 
       <FirstLogonCommands>
+
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
           <Description>Configure static IPv4 network</Description>
           <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "try { New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_mask }} -DefaultGateway '{{ vm_gateway }}' -AddressFamily IPv4 -ErrorAction Stop; Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}' -ErrorAction Stop; 'OK' | Out-File -FilePath 'C:\netcfg.log' -Encoding utf8 } catch { $_.Exception.Message | Out-File -FilePath 'C:\netcfg.log' -Encoding utf8 }"</CommandLine>
         </SynchronousCommand>
+
         <SynchronousCommand wcm:action="add">
           <Order>2</Order>
+          <Description>Enable ICMP ping (ICMPv4-In) all profiles</Description>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "Enable-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction SilentlyContinue; netsh advfirewall firewall set rule name='File and Printer Sharing (Echo Request - ICMPv4-In)' new enable=yes profile=any"</CommandLine>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Description>Enable and configure WinRM</Description>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "Enable-PSRemoting -Force -SkipNetworkProfileCheck; Set-Service WinRM -StartupType Automatic; Start-Service WinRM; winrm set winrm/config/service '@{AllowUnencrypted=&quot;true&quot;}'; winrm set winrm/config/service/auth '@{Basic=&quot;true&quot;}'; netsh advfirewall firewall add rule name='WinRM HTTP 5985' dir=in action=allow protocol=TCP localport=5985"</CommandLine>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
           <Description>Change RDP port to 4502</Description>
           <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name PortNumber -Value 4502"</CommandLine>
         </SynchronousCommand>
+
         <SynchronousCommand wcm:action="add">
-          <Order>3</Order>
+          <Order>5</Order>
           <Description>Add firewall rule for RDP on port 4502</Description>
           <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "New-NetFirewallRule -DisplayName 'Remote Desktop - Custom Port 4502' -Direction Inbound -Protocol TCP -LocalPort 4502 -Action Allow"</CommandLine>
         </SynchronousCommand>
+
         <SynchronousCommand wcm:action="add">
-          <Order>4</Order>
+          <Order>6</Order>
           <Description>Restart Terminal Services</Description>
           <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "Restart-Service TermService -Force"</CommandLine>
         </SynchronousCommand>
+
       </FirstLogonCommands>
 
     </component>
