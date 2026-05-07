@@ -10,7 +10,6 @@
     zabbix_version: "7.4"
 
   tasks:
-
     - name: Detectar Python disponible
       raw: |
         if command -v python3.9 &>/dev/null; then echo "/usr/bin/python3.9"
@@ -54,9 +53,8 @@
       when: agent_installed.rc != 0
 
     - name: Instalar zabbix-agent2
-      dnf:
-        name: zabbix-agent2
-        state: present
+      shell: dnf install -y zabbix-agent2
+      when: agent_installed.rc != 0
 
     - name: Configurar Server
       lineinfile:
@@ -84,18 +82,15 @@
         insertafter: EOF
 
     - name: Abrir puerto 10050 en firewall
-      firewalld:
-        port: 10050/tcp
-        permanent: yes
-        state: enabled
-        immediate: yes
+      shell: |
+        firewall-cmd --permanent --add-port=10050/tcp
+        firewall-cmd --reload
       ignore_errors: yes
 
     - name: Habilitar e iniciar zabbix-agent2
-      systemd:
-        name: zabbix-agent2
-        enabled: yes
-        state: started
+      shell: |
+        systemctl enable zabbix-agent2
+        systemctl start zabbix-agent2
 
     - name: Verificar estado del agente
       shell: systemctl is-active zabbix-agent2
