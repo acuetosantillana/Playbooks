@@ -1,8 +1,8 @@
 ---
 - name: Instalar Zabbix Agent 2 en Linux - Santillana
-  hosts: linux
+  hosts: all
+  gather_facts: false
   become: yes
-  gather_facts: yes
   serial: 10
 
   vars:
@@ -10,6 +10,23 @@
     zabbix_version: "7.4"
 
   tasks:
+
+    - name: Detectar Python disponible
+      raw: |
+        if command -v python3.9 &>/dev/null; then echo "/usr/bin/python3.9"
+        elif command -v python3.8 &>/dev/null; then echo "/usr/bin/python3.8"
+        elif command -v python3.6 &>/dev/null; then echo "/usr/bin/python3.6"
+        else echo "/usr/bin/python3"
+        fi
+      register: python_path
+      changed_when: false
+
+    - name: Establecer interprete Python
+      set_fact:
+        ansible_python_interpreter: "{{ python_path.stdout | trim }}"
+
+    - name: Gather facts
+      setup:
 
     - name: Detectar version de OS
       set_fact:
@@ -30,7 +47,6 @@
       shell: >
         rpm -Uvh https://repo.zabbix.com/zabbix/{{ zabbix_version }}/release/rocky/{{ os_major }}/noarch/zabbix-release-latest-{{ zabbix_version }}.el{{ os_major }}.noarch.rpm
       when: agent_installed.rc != 0
-      register: repo_install
       ignore_errors: yes
 
     - name: Limpiar cache DNF
@@ -86,6 +102,6 @@
       register: agent_status
       changed_when: false
 
-    - name: Resultado
+    - name: Resultado final
       debug:
-        msg: "{{ inventory_hostname }} ({{ ansible_host }}) | OS: Rocky Linux {{ os_major }} | Agente: {{ agent_status.stdout }}"
+        msg: "{{ inventory_hostname }} | Rocky Linux {{ os_major }} | Agente: {{ agent_status.stdout }}"
