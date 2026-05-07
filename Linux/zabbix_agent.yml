@@ -1,8 +1,9 @@
 ---
-- name: Instalar Zabbix Agent 2 en Linux
-  hosts: all
+- name: Instalar Zabbix Agent 2 en Linux - Santillana
+  hosts: linux
   become: yes
   gather_facts: yes
+  serial: 10
 
   vars:
     zabbix_server_ip: "10.138.120.3"
@@ -14,25 +15,23 @@
       set_fact:
         os_major: "{{ ansible_distribution_major_version }}"
 
-    - name: Verificar si ya existe el agente instalado
+    - name: Verificar si zabbix-agent2 ya esta instalado
       shell: rpm -q zabbix-agent2
       register: agent_installed
       ignore_errors: yes
       changed_when: false
 
-    - name: Mostrar estado previo
-      debug:
-        msg: "{{ inventory_hostname }} — Agent {{ 'YA INSTALADO' if agent_installed.rc == 0 else 'NO instalado' }}"
-
-    - name: Eliminar repo Zabbix anterior si existe
+    - name: Eliminar repo Zabbix anterior
       shell: rpm -e zabbix-release
       ignore_errors: yes
       when: agent_installed.rc != 0
 
-    - name: Instalar repositorio Zabbix correcto
+    - name: Instalar repositorio Zabbix correcto para EL{{ os_major }}
       shell: >
         rpm -Uvh https://repo.zabbix.com/zabbix/{{ zabbix_version }}/release/rocky/{{ os_major }}/noarch/zabbix-release-latest-{{ zabbix_version }}.el{{ os_major }}.noarch.rpm
       when: agent_installed.rc != 0
+      register: repo_install
+      ignore_errors: yes
 
     - name: Limpiar cache DNF
       shell: dnf clean all -y
@@ -61,7 +60,7 @@
         regexp: "^Hostname="
         line: "Hostname={{ inventory_hostname }}"
 
-    - name: Configurar HostMetadata
+    - name: Agregar HostMetadata
       lineinfile:
         path: /etc/zabbix/zabbix_agent2.conf
         regexp: "^HostMetadata="
@@ -82,11 +81,11 @@
         enabled: yes
         state: started
 
-    - name: Verificar que el agente esta corriendo
+    - name: Verificar estado del agente
       shell: systemctl is-active zabbix-agent2
       register: agent_status
       changed_when: false
 
-    - name: Resultado final
+    - name: Resultado
       debug:
-        msg: "{{ inventory_hostname }} — Agente: {{ agent_status.stdout }} | OS: Rocky Linux {{ os_major }}"
+        msg: "{{ inventory_hostname }} ({{ ansible_host }}) | OS: Rocky Linux {{ os_major }} | Agente: {{ agent_status.stdout }}"
