@@ -1,0 +1,92 @@
+---
+- name: Instalar Zabbix Agent 2 en Linux
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  vars:
+    zabbix_server_ip: "10.138.120.3"
+    zabbix_version: "7.4"
+
+  tasks:
+
+    - name: Detectar version de OS
+      set_fact:
+        os_major: "{{ ansible_distribution_major_version }}"
+
+    - name: Verificar si ya existe el agente instalado
+      shell: rpm -q zabbix-agent2
+      register: agent_installed
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Mostrar estado previo
+      debug:
+        msg: "{{ inventory_hostname }} — Agent {{ 'YA INSTALADO' if agent_installed.rc == 0 else 'NO instalado' }}"
+
+    - name: Eliminar repo Zabbix anterior si existe
+      shell: rpm -e zabbix-release
+      ignore_errors: yes
+      when: agent_installed.rc != 0
+
+    - name: Instalar repositorio Zabbix correcto
+      shell: >
+        rpm -Uvh https://repo.zabbix.com/zabbix/{{ zabbix_version }}/release/rocky/{{ os_major }}/noarch/zabbix-release-latest-{{ zabbix_version }}.el{{ os_major }}.noarch.rpm
+      when: agent_installed.rc != 0
+
+    - name: Limpiar cache DNF
+      shell: dnf clean all -y
+      when: agent_installed.rc != 0
+
+    - name: Instalar zabbix-agent2
+      dnf:
+        name: zabbix-agent2
+        state: present
+
+    - name: Configurar Server
+      lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: "^Server="
+        line: "Server={{ zabbix_server_ip }}"
+
+    - name: Configurar ServerActive
+      lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: "^ServerActive="
+        line: "ServerActive={{ zabbix_server_ip }}"
+
+    - name: Configurar Hostname
+      lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: "^Hostname="
+        line: "Hostname={{ inventory_hostname }}"
+
+    - name: Configurar HostMetadata
+      lineinfile:
+        path: /etc/zabbix/zabbix_agent2.conf
+        regexp: "^HostMetadata="
+        line: "HostMetadata=linux"
+        insertafter: EOF
+
+    - name: Abrir puerto 10050 en firewall
+      firewalld:
+        port: 10050/tcp
+        permanent: yes
+        state: enabled
+        immediate: yes
+      ignore_errors: yes
+
+    - name: Habilitar e iniciar zabbix-agent2
+      systemd:
+        name: zabbix-agent2
+        enabled: yes
+        state: started
+
+    - name: Verificar que el agente esta corriendo
+      shell: systemctl is-active zabbix-agent2
+      register: agent_status
+      changed_when: false
+
+    - name: Resultado final
+      debug:
+        msg: "{{ inventory_hostname }} — Agente: {{ agent_status.stdout }} | OS: Rocky Linux {{ os_major }}"
