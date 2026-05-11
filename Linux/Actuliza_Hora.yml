@@ -1,0 +1,14 @@
+---
+- name: Sincronizar tiempo NTP
+  hosts: all
+  become: yes
+  gather_facts: false
+  tasks:
+    - name: Instalar chrony
+      shell: dnf install -y chrony
+
+    - name: Habilitar e iniciar chronyd
+      shell: |
+        systemctl enable chronyd
+        systemctl start chronyd
+        chronyc makestep
