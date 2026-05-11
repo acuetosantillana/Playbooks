@@ -4,11 +4,38 @@
   become: yes
   gather_facts: false
   tasks:
-    - name: Instalar chrony
+
+    - name: Detectar Python disponible
+      raw: |
+        if command -v python3.9 &>/dev/null; then echo "/usr/bin/python3.9"
+        elif command -v python3.8 &>/dev/null; then echo "/usr/bin/python3.8"
+        elif command -v python3.6 &>/dev/null; then echo "/usr/bin/python3.6"
+        else echo "/usr/bin/python3"
+        fi
+      register: python_path
+      changed_when: false
+
+    - name: Establecer interprete Python
+      set_fact:
+        ansible_python_interpreter: "{{ python_path.stdout | trim }}"
+
+    - name: Instalar chrony si no existe
       shell: dnf install -y chrony
+      ignore_errors: yes
 
     - name: Habilitar e iniciar chronyd
       shell: |
         systemctl enable chronyd
         systemctl start chronyd
-        chronyc makestep
+
+    - name: Sincronizar tiempo inmediatamente
+      shell: chronyc makestep
+
+    - name: Verificar sincronización
+      shell: chronyc tracking | grep "System time"
+      register: time_status
+      changed_when: false
+
+    - name: Resultado
+      debug:
+        msg: "{{ inventory_hostname }} — {{ time_status.stdout }}"
