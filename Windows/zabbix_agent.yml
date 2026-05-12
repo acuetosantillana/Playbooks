@@ -1,0 +1,79 @@
+---
+- name: Instalar Zabbix Agent 2 en Windows
+  hosts: windows
+  gather_facts: false
+  serial: 10
+
+  vars:
+    zabbix_server_ip: "10.138.120.3"
+    msi_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.4/7.4.9/zabbix_agent2-7.4.9-windows-amd64-openssl.msi"
+    msi_dest: 'C:\Temp\zabbix_agent2.msi'
+
+  tasks:
+
+    - name: Crear carpeta Temp
+      win_file:
+        path: C:\Temp
+        state: directory
+
+    - name: Verificar si Agent 2 ya esta instalado
+      win_service:
+        name: "Zabbix Agent 2"
+      register: agent_service
+      ignore_errors: yes
+
+    - name: Desinstalar agente legacy si existe
+      win_package:
+        product_id: "Zabbix Agent"
+        state: absent
+      ignore_errors: yes
+      when: not agent_service.exists | default(false)
+
+    - name: Descargar MSI Zabbix Agent 2
+      win_get_url:
+        url: "{{ msi_url }}"
+        dest: "{{ msi_dest }}"
+      when: not agent_service.exists | default(false)
+
+    - name: Instalar Zabbix Agent 2
+      win_package:
+        path: "{{ msi_dest }}"
+        state: present
+        arguments: >
+          /qn
+          SERVER={{ zabbix_server_ip }}
+          SERVERACTIVE={{ zabbix_server_ip }}
+          HOSTNAME={{ inventory_hostname }}
+      when: not agent_service.exists | default(false)
+
+    - name: Agregar HostMetadata
+      win_lineinfile:
+        path: 'C:\Program Files\Zabbix Agent 2\zabbix_agent2.conf'
+        line: "HostMetadata=windows"
+        insertafter: EOF
+      ignore_errors: yes
+
+    - name: Abrir puerto 10050 en firewall
+      win_firewall_rule:
+        name: "Zabbix Agent 2"
+        localport: 10050
+        action: allow
+        direction: in
+        protocol: tcp
+        state: present
+        enabled: yes
+
+    - name: Iniciar y habilitar servicio
+      win_service:
+        name: "Zabbix Agent 2"
+        state: started
+        start_mode: auto
+
+    - name: Verificar estado
+      win_service:
+        name: "Zabbix Agent 2"
+      register: final_status
+
+    - name: Resultado
+      debug:
+        msg: "{{ inventory_hostname }} | Zabbix Agent 2: {{ final_status.state }}"
