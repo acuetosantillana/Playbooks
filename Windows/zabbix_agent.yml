@@ -23,9 +23,10 @@
       ignore_errors: yes
 
     - name: Desinstalar agente legacy si existe
-      win_package:
-        product_id: "Zabbix Agent"
-        state: absent
+      win_shell: |
+        $app = Get-WmiObject -Class Win32_Product |
+               Where-Object {$_.Name -like '*Zabbix Agent*' -and $_.Name -notlike '*2*'}
+        if ($app) { $app.Uninstall() }
       ignore_errors: yes
       when: not agent_service.exists | default(false)
 
@@ -35,45 +36,49 @@
         dest: "{{ msi_dest }}"
       when: not agent_service.exists | default(false)
 
-    - name: Instalar Zabbix Agent 2
-      win_package:
-        path: "{{ msi_dest }}"
-        state: present
-        arguments: >
-          /qn
-          SERVER={{ zabbix_server_ip }}
-          SERVERACTIVE={{ zabbix_server_ip }}
-          HOSTNAME={{ inventory_hostname }}
+    - name: Instalar Zabbix Agent 2 con HostMetadata
+      win_shell: |
+        msiexec /i "{{ msi_dest }}" /qn `
+          SERVER={{ zabbix_server_ip }} `
+          SERVERACTIVE={{ zabbix_server_ip }} `
+          HOSTNAME={{ inventory_hostname }} `
+          HOSTMETADATA=windows
+        Start-Sleep -Seconds 15
       when: not agent_service.exists | default(false)
 
-    - name: Agregar HostMetadata
-      win_lineinfile:
-        path: 'C:\Program Files\Zabbix Agent 2\zabbix_agent2.conf'
-        line: "HostMetadata=windows"
-        insertafter: EOF
-      ignore_errors: yes
+    - name: Verificar y agregar HostMetadata si no existe
+      win_shell: |
+        $conf = 'C:\Program Files\Zabbix Agent 2\zabbix_agent2.conf'
+        $content = Get-Content $conf
+        if (-not ($content -match "^HostMetadata=")) {
+            Add-Content -Path $conf -Value 'HostMetadata=windows'
+            Write-Output "Agregado"
+        } else {
+            Write-Output "Ya existe"
+        }
+      register: metadata_result
 
     - name: Abrir puerto 10050 en firewall
-      win_firewall_rule:
-        name: "Zabbix Agent 2"
-        localport: 10050
-        action: allow
-        direction: in
-        protocol: tcp
-        state: present
-        enabled: yes
+      win_shell: |
+        netsh advfirewall firewall add rule `
+          name="Zabbix Agent 2" `
+          protocol=TCP `
+          dir=in `
+          localport=10050 `
+          action=allow
+      ignore_errors: yes
 
     - name: Iniciar y habilitar servicio
       win_service:
         name: "Zabbix Agent 2"
-        state: started
+        state: restarted
         start_mode: auto
 
-    - name: Verificar estado
+    - name: Verificar estado final
       win_service:
         name: "Zabbix Agent 2"
       register: final_status
 
     - name: Resultado
       debug:
-        msg: "{{ inventory_hostname }} | Zabbix Agent 2: {{ final_status.state }}"
+        msg: "{{ inventory_hostname }} | Agent: {{ final_status.state }} | Metadata: {{ metadata_result.stdout | trim }}"
