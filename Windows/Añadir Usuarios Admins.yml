@@ -1,30 +1,26 @@
 ---
-- name: Agregar cuentas de dominio al grupo Administrators local
-  hosts: "{{ target_hosts }}"
+- name: Gestión de administradores locales en Windows
+  hosts: all
   gather_facts: false
 
   vars:
-    domain: "SANTILLANA"
-    modo: "individual"  # individual = un host | todos = grupo completo
+    domain: "SANCLOCAL"
 
   tasks:
 
-    - name: Validar que se proporcionaron cuentas
+    - name: Validar variables
       ansible.builtin.fail:
-        msg: "Debes proporcionar la variable 'admin_accounts' con al menos un usuario"
-      when: admin_accounts is not defined or admin_accounts | length == 0
+        msg: "Debes proporcionar 'action' y 'admin_accounts' antes de ejecutar"
+      when: >
+        action is not defined or action | length == 0 or
+        admin_accounts is not defined or admin_accounts | length == 0
 
-    - name: Validar modo
-      ansible.builtin.fail:
-        msg: "La variable 'modo' debe ser 'individual' o 'todos'"
-      when: modo not in ['individual', 'todos']
-
-    - name: Mostrar modo de ejecución
-      ansible.builtin.debug:
-        msg: "Modo: {{ modo }} | Host(s): {{ target_hosts }} | Cuentas: {{ admin_accounts }}"
-
-    - name: Agregar cuentas al grupo Administrators
+    - name: "{{ action }} cuentas en el grupo Administrators"
       ansible.windows.win_group_membership:
         name: Administrators
-        members: "{{ admin_accounts | map('regex_replace', '^(?!.*\\\\)', domain + '\\\\') | list }}"
-        state: present
+        members: "{{ admin_accounts.split(',') | map('trim') | map('regex_replace', '^(?!.*\\\\)', domain + '\\\\') | list }}"
+        state: "{{ 'present' if action == 'Agregar' else 'absent' }}"
+
+    - name: Mostrar resultado
+      ansible.builtin.debug:
+        msg: "{{ action }} en {{ inventory_hostname }}: {{ admin_accounts.split(',') | map('trim') | list }}"
