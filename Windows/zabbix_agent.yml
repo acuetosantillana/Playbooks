@@ -5,6 +5,7 @@
   serial: 10
 
   vars:
+    ansible_pipelining: false
     zabbix_server_ip: "10.138.120.3"
     msi_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.4/7.4.9/zabbix_agent2-7.4.9-windows-amd64-openssl.msi"
     msi_dest: 'C:\Temp\zabbix_agent2.msi'
