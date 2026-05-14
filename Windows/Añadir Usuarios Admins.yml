@@ -15,21 +15,18 @@
         action is not defined or action | length == 0 or
         admin_accounts is not defined or admin_accounts | length == 0
 
-    - name: Agregar al grupo Administradores (español)
-      ansible.windows.win_group_membership:
-        name: "Administradores"
-        members: "{{ admin_accounts.split(',') | map('trim') | map('regex_replace', '^(?!.*\\\\)', domain + '\\\\') | list }}"
-        state: "{{ 'present' if action == 'Agregar' else 'absent' }}"
-      register: resultado_es
-      ignore_errors: true
+    - name: Obtener nombre del grupo Administrators por SID
+      ansible.windows.win_shell: |
+        (New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")).Translate([System.Security.Principal.NTAccount]).Value.Split('\')[1]
+      register: nombre_grupo
+      changed_when: false
 
-    - name: Agregar al grupo Administrators (inglés)
+    - name: "{{ action }} cuentas en el grupo Administrators"
       ansible.windows.win_group_membership:
-        name: "Administrators"
+        name: "{{ nombre_grupo.stdout | trim }}"
         members: "{{ admin_accounts.split(',') | map('trim') | map('regex_replace', '^(?!.*\\\\)', domain + '\\\\') | list }}"
         state: "{{ 'present' if action == 'Agregar' else 'absent' }}"
-      when: resultado_es is failed
 
     - name: Mostrar resultado
       ansible.builtin.debug:
-        msg: "{{ action }} en {{ inventory_hostname }}: {{ admin_accounts.split(',') | map('trim') | list }}"
+        msg: "{{ action }} en {{ inventory_hostname }} (grupo: {{ nombre_grupo.stdout | trim }}): {{ admin_accounts.split(',') | map('trim') | list }}"
