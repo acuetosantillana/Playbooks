@@ -1,6 +1,6 @@
 ---
 - name: Gestión de administradores locales en Windows
-  hosts: all
+  hosts: "{{ target_hosts | default('all') }}"
   gather_facts: true
 
   vars:
