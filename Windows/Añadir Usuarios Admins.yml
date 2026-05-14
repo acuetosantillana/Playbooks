@@ -1,7 +1,7 @@
 ---
 - name: Gestión de administradores locales en Windows
   hosts: "{{ target_hosts | default('all') }}"
-  gather_facts: true
+  gather_facts: false
 
   vars:
     domain: "SANCLOCAL"
@@ -15,16 +15,21 @@
         action is not defined or action | length == 0 or
         admin_accounts is not defined or admin_accounts | length == 0
 
-    - name: Detectar nombre del grupo según idioma
-      ansible.builtin.set_fact:
-        grupo_admins: "{{ 'Administradores' if ansible_language == 'es' else 'Administrators' }}"
-
-    - name: "{{ action }} cuentas en el grupo {{ grupo_admins }}"
+    - name: Agregar al grupo Administradores (español)
       ansible.windows.win_group_membership:
-        name: "{{ grupo_admins }}"
+        name: "Administradores"
         members: "{{ admin_accounts.split(',') | map('trim') | map('regex_replace', '^(?!.*\\\\)', domain + '\\\\') | list }}"
         state: "{{ 'present' if action == 'Agregar' else 'absent' }}"
+      register: resultado_es
+      ignore_errors: true
+
+    - name: Agregar al grupo Administrators (inglés)
+      ansible.windows.win_group_membership:
+        name: "Administrators"
+        members: "{{ admin_accounts.split(',') | map('trim') | map('regex_replace', '^(?!.*\\\\)', domain + '\\\\') | list }}"
+        state: "{{ 'present' if action == 'Agregar' else 'absent' }}"
+      when: resultado_es is failed
 
     - name: Mostrar resultado
       ansible.builtin.debug:
-        msg: "{{ action }} en {{ inventory_hostname }} (grupo: {{ grupo_admins }}): {{ admin_accounts.split(',') | map('trim') | list }}"
+        msg: "{{ action }} en {{ inventory_hostname }}: {{ admin_accounts.split(',') | map('trim') | list }}"
