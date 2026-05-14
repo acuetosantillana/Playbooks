@@ -15,21 +15,12 @@
         action is not defined or action | length == 0 or
         admin_accounts is not defined or admin_accounts | length == 0
 
-    - name: Obtener nombre del grupo Administrators por SID
-      ansible.windows.win_powershell:
-        script: |
-          $sid = New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')
-          $name = $sid.Translate([System.Security.Principal.NTAccount]).Value
-          $name.Split('\')[1]
-      register: nombre_grupo
-      changed_when: false
-
-    - name: "{{ action }} cuentas en el grupo Administrators"
+    - name: "{{ action }} cuentas en el grupo {{ grupo_admins }}"
       ansible.windows.win_group_membership:
-        name: "{{ nombre_grupo.output[0] | trim }}"
+        name: "{{ grupo_admins }}"
         members: "{{ admin_accounts.split(',') | map('trim') | map('regex_replace', '^(?!.*\\\\)', domain + '\\\\') | list }}"
         state: "{{ 'present' if action == 'Agregar' else 'absent' }}"
 
     - name: Mostrar resultado
       ansible.builtin.debug:
-        msg: "{{ action }} en {{ inventory_hostname }} (grupo: {{ nombre_grupo.output[0] | trim }}): {{ admin_accounts.split(',') | map('trim') | list }}"
+        msg: "{{ action }} en {{ inventory_hostname }} (grupo: {{ grupo_admins }}): {{ admin_accounts.split(',') | map('trim') | list }}"
