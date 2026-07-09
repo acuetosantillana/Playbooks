@@ -517,7 +517,7 @@
           IpAddress: "{{ vm_ip }}"
           TimeoutSeconds: 1800   # 30 minutos
 
-    - name: "[Post-install] Esperar puerto SSH 22 activo en la VM (máx 30 min)"
+    - name: "[Post-install] Esperar puerto SSH 22 activo en la VM (máx 45 min)"
       ansible.windows.win_powershell:
         script: |
           param([string]$IpAddress, [int]$TimeoutSeconds)
@@ -552,7 +552,7 @@
           }
         parameters:
           IpAddress: "{{ vm_ip }}"
-          TimeoutSeconds: 1800    # 30 minutos adicionales tras el ping
+          TimeoutSeconds: 2400    # 45 minutos adicionales tras el ping
 
     # -------------------------------------------------------------------
     # 6) Desmontar DVDs de la VM
