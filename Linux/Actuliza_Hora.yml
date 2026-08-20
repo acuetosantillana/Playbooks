@@ -29,7 +29,7 @@
       when: ya_configurado.rc != 0
 
     - name: 4. Habilitar y reiniciar el servicio chronyd
-      ansible.builtin.system_service:
+      ansible.builtin.service:
         name: chronyd
         enabled: yes
         state: restarted
