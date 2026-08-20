@@ -1,41 +1,52 @@
 ---
-- name: Sincronizar tiempo NTP
+- name: Sincronizar tiempo NTP con Windows
   hosts: all
   become: yes
   gather_facts: false
   tasks:
 
-    - name: Detectar Python disponible
-      raw: |
-        if command -v python3.9 &>/dev/null; then echo "/usr/bin/python3.9"
-        elif command -v python3.8 &>/dev/null; then echo "/usr/bin/python3.8"
-        elif command -v python3.6 &>/dev/null; then echo "/usr/bin/python3.6"
-        else echo "/usr/bin/python3"
-        fi
-      register: python_path
+    - name: 1. Validar si ya está configurado el servidor Windows
+      ansible.builtin.command: grep -q "10.138.120.13" /etc/chrony.conf
+      register: ya_configurado
+      failed_when: false
       changed_when: false
+      check_mode: no
 
-    - name: Establecer interprete Python
-      set_fact:
-        ansible_python_interpreter: "{{ python_path.stdout | trim }}"
+    - name: 2. Comentar la línea del pool original de internet
+      ansible.builtin.replace:
+        path: /etc/chrony.conf
+        regexp: '^(pool 2.rocky.pool.ntp.org.*)'
+        replace: '# \1'
+      when: ya_configurado.rc != 0
 
-    - name: Instalar chrony si no existe
-      shell: dnf install -y chrony
-      ignore_errors: yes
+    - name: 3. Inyectar las IPs de los servidores Windows de Santillana
+      ansible.builtin.blockinfile:
+        path: /etc/chrony.conf
+        marker: "# {mark} CONFIGURACION NTP WINDOWS SANTILLANA"
+        block: |
+          server 10.138.120.13 iburst prefer
+          server 10.138.120.102 iburst
+      when: ya_configurado.rc != 0
 
-    - name: Habilitar e iniciar chronyd
-      shell: |
-        systemctl enable chronyd
-        systemctl start chronyd
+    - name: 4. Habilitar y reiniciar el servicio chronyd
+      ansible.builtin.system_service:
+        name: chronyd
+        enabled: yes
+        state: restarted
+      when: ya_configurado.rc != 0
 
-    - name: Sincronizar tiempo inmediatamente
-      shell: chronyc makestep
+    - name: 5. Forzar el salto de tiempo inmediato hacia Windows
+      ansible.builtin.command: chronyc -a makestep
+      when: ya_configurado.rc != 0
 
-    - name: Verificar sincronización
-      shell: chronyc tracking | grep "System time"
+    - name: 6. Verificar estado de la sincronización (Se ejecuta siempre)
+      ansible.builtin.command: chronyc tracking
       register: time_status
       changed_when: false
 
-    - name: Resultado
-      debug:
-        msg: "{{ inventory_hostname }} — {{ time_status.stdout }}"
+    - name: 7. Mostrar resultado en consola
+      ansible.builtin.debug:
+        msg: 
+          - "Servidor: {{ inventory_hostname }}"
+          - "Estado: {{ 'Omitido (Ya estaba configurado)' if ya_configurado.rc == 0 else 'Configuración aplicada ahora' }}"
+          - "{{ time_status.stdout_lines | select('match', '^(Reference ID|System time).*') | list }}"
