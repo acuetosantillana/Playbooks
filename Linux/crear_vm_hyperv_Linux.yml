@@ -1,5 +1,5 @@
 ---
-- name: Crear VM Rocky Linux 9.6 en Hyper-V Failover Cluster
+- name: Crear VM Rocky Linux 9 en Hyper-V Failover Cluster
   hosts: "{{ hyperv_host }}"
   gather_facts: no
 
@@ -26,7 +26,7 @@
       - 'C:\\ClusterStorage\\Volume7'
 
     # ISO Rocky por defecto en NAS
-    iso_path_default: '\\10.138.120.130\isos\Rocky-9.6-x86_64-dvd.iso'
+    iso_path_default: '\\10.138.120.130\isos\Rocky-9-x86_64-dvd.iso'
 
     # NAS para el SMB Global Mapping
     nas_server: '10.138.120.130'
@@ -124,7 +124,7 @@
         path: "{{ ks_dir }}"
         state: directory
 
-    - name: Generar ks.cfg (Kickstart) para Rocky Linux 9.6
+    - name: Generar ks.cfg (Kickstart) para Rocky Linux 9
       ansible.windows.win_template:
         src: "templates/ks.cfg.j2"
         dest: "{{ ks_cfg_path }}"
@@ -179,7 +179,7 @@
     # -------------------------------------------------------------------
     # 4) Crear VM en Cluster con CSV
     # -------------------------------------------------------------------
-    - name: Crear VM Rocky Linux 9.6 como Highly Available en Cluster
+    - name: Crear VM Rocky Linux 9 como Highly Available en Cluster
       ansible.windows.win_powershell:
         script: |
           param(
@@ -517,7 +517,7 @@
           IpAddress: "{{ vm_ip }}"
           TimeoutSeconds: 1800   # 30 minutos
 
-    - name: "[Post-install] Esperar puerto SSH 22 activo en la VM (máx 10 min)"
+    - name: "[Post-install] Esperar puerto SSH 22 activo en la VM (máx 45 min)"
       ansible.windows.win_powershell:
         script: |
           param([string]$IpAddress, [int]$TimeoutSeconds)
@@ -552,7 +552,7 @@
           }
         parameters:
           IpAddress: "{{ vm_ip }}"
-          TimeoutSeconds: 600    # 10 minutos adicionales tras el ping
+          TimeoutSeconds: 2400    # 45 minutos adicionales tras el ping
 
     # -------------------------------------------------------------------
     # 6) Desmontar DVDs de la VM
