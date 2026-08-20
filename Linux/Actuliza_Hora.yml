@@ -5,41 +5,38 @@
   gather_facts: false
   tasks:
 
-    - name: 1. Validar si ya está configurado el servidor Windows
-      shell: grep -q "10.138.120.13" /etc/chrony.conf
-      register: ya_configurado
-      failed_when: false
-      changed_when: false
+    - name: 1. Aplicar cambios a la hora y configurar fuentes
+      raw: |
+        # Validar si ya está configurado el servidor Windows
+        if ! grep -q "10.138.120.13" /etc/chrony.conf; then
+          # Comentar el pool original de internet si existe
+          sed -i 's/^\(pool 2.rocky.pool.ntp.org.*\)/# \1/g' /etc/chrony.conf
+          
+          # Inyectar las fuentes de Windows de Santillana
+          echo -e "\n# CONFIGURACION NTP WINDOWS SANTILLANA" >> /etc/chrony.conf
+          echo "server 10.138.120.13 iburst prefer" >> /etc/chrony.conf
+          echo "server 10.138.120.102 iburst" >> /etc/chrony.conf
+          
+          # Habilitar y reiniciar el servicio chronyd
+          systemctl enable chronyd
+          systemctl restart chronyd
+          
+          # Forzar el salto de tiempo inmediato hacia Windows
+          chronyc -a makestep
+          echo "Configuracion aplicada ahora"
+        else
+          echo "Omitido (Ya estaba configurado)"
+        fi
+      register: raw_result
 
-    - name: 2. Aplicar configuración de Chrony (Solo si falta)
-      shell: |
-        # Comentar el pool original de internet si existe
-        sed -i 's/^\(pool 2.rocky.pool.ntp.org.*\)/# \1/g' /etc/chrony.conf
-        
-        # Inyectar las fuentes de Windows de Santillana
-        echo -e "\n# CONFIGURACION NTP WINDOWS SANTILLANA" >> /etc/chrony.conf
-        echo "server 10.138.120.13 iburst prefer" >> /etc/chrony.conf
-        echo "server 10.138.120.102 iburst" >> /etc/chrony.conf
-      when: ya_configurado.rc != 0
-
-    - name: 3. Habilitar y reiniciar el servicio chronyd
-      shell: |
-        systemctl enable chronyd
-        systemctl restart chronyd
-      when: ya_configurado.rc != 0
-
-    - name: 4. Forzar el salto de tiempo inmediato hacia Windows
-      shell: chronyc -a makestep
-      when: ya_configurado.rc != 0
-
-    - name: 5. Verificar estado de la sincronización (Se ejecuta siempre)
-      shell: chronyc tracking
+    - name: 2. Verificar estado de la sincronizacion (Se ejecuta siempre)
+      raw: chronyc tracking | grep -E "Reference ID|System time"
       register: time_status
-      changed_when: false
 
-    - name: 6. Mostrar resultado en consola
+    - name: 3. Mostrar resultado en consola
       debug:
         msg: 
           - "Servidor: {{ inventory_hostname }}"
-          - "Estado: {{ 'Omitido (Ya estaba configurado)' if ya_configurado.rc == 0 else 'Configuracion aplicada ahora' }}"
-          - "{{ time_status.stdout_lines | select('match', '^(Reference ID|System time).*') | list }}"
+          - "Resultado script: {{ raw_result.stdout_lines | last }}"
+          - "Estado actual:"
+          - "{{ time_status.stdout_lines }}"
