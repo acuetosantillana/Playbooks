@@ -81,11 +81,14 @@ part pv.01 --grow --size=1 --ondisk=sda
 # vg_system - Grupo de volúmenes LVM
 volgroup vg_system pv.01
 
-# lv_root (20480 MB = 20 GB) - Sistema raíz
+# lv_root (20480 MB = 50 GB) - Sistema raíz
 logvol / --vgname=vg_system --name=lv_root --size=20480 --fstype=xfs
 
-# lv_home (51200 MB = 50 GB) - Directorios de usuarios
+# lv_home (51200 MB = 20 GB) - Directorios de usuarios
 logvol /home --vgname=vg_system --name=lv_home --size=51200 --fstype=xfs
+
+# lv_swap (tamaño recomendado) - Swap según recomendación de Anaconda
+logvol swap --vgname=vg_system --name=lv_swap --recommended
 
 # lv_swap (tamaño recomendado) - Swap según recomendación de Anaconda
 logvol swap --vgname=vg_system --name=lv_swap --recommended

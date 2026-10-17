@@ -1,102 +1,160 @@
+
 ---
-- name: Instalar Zabbix Agent 2 en Linux - Santillana
+- name: Instalar Zabbix Agent 2 - Santillana
   hosts: all
   gather_facts: false
-  become: yes
+  become: true
   serial: 10
 
   vars:
     zabbix_server_ip: "10.138.120.3"
     zabbix_version: "7.4"
+    zabbix_metadata: "linux"
+
+  pre_tasks:
+    - name: Detectar Python compatible
+      ansible.builtin.raw: |
+        for p in /usr/bin/python3.12 /usr/bin/python3.11 \
+                 /usr/bin/python3.9 /usr/bin/python3.8 \
+                 /usr/libexec/platform-python /usr/bin/python3; do
+          if [ -x "$p" ]; then
+            echo "$p"
+            exit 0
+          fi
+        done
+        exit 1
+      register: python_detect
+      changed_when: false
+
+    - name: Establecer interprete
+      ansible.builtin.set_fact:
+        ansible_python_interpreter: "{{ python_detect.stdout | trim }}"
+
+    - name: Recopilar informacion del sistema
+      ansible.builtin.setup:
+
+    - name: Validar sistema operativo
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution in ['Rocky', 'AlmaLinux', 'RedHat']
+          - ansible_distribution_major_version in ['8', '9', '10']
+        fail_msg: "Sistema no soportado por este playbook"
+
+    - name: Definir variables del repositorio
+      ansible.builtin.set_fact:
+        os_major: "{{ ansible_distribution_major_version }}"
+        repo_distro: >-
+          {{ {'Rocky':'rocky',
+              'AlmaLinux':'alma',
+              'RedHat':'rhel'}[ansible_distribution] }}
+
+    - name: Construir URL del repositorio
+      ansible.builtin.set_fact:
+        zabbix_repo_url: >-
+          https://repo.zabbix.com/zabbix/{{ zabbix_version }}/release/{{ repo_distro }}/{{ os_major }}/noarch/zabbix-release-latest-{{ zabbix_version }}.el{{ os_major }}.noarch.rpm
 
   tasks:
-    - name: Detectar Python disponible
-      raw: |
-        if command -v python3.9 &>/dev/null; then echo "/usr/bin/python3.9"
-        elif command -v python3.8 &>/dev/null; then echo "/usr/bin/python3.8"
-        elif command -v python3.6 &>/dev/null; then echo "/usr/bin/python3.6"
-        else echo "/usr/bin/python3"
-        fi
-      register: python_path
-      changed_when: false
+    - name: Consultar paquetes instalados
+      ansible.builtin.package_facts:
+        manager: auto
 
-    - name: Establecer interprete Python
-      set_fact:
-        ansible_python_interpreter: "{{ python_path.stdout | trim }}"
+    - name: Detectar instalacion existente
+      ansible.builtin.set_fact:
+        zabbix_installed: "{{ 'zabbix-agent2' in ansible_facts.packages }}"
 
-    - name: Gather facts
-      setup:
+    - name: Mostrar sistema detectado
+      ansible.builtin.debug:
+        msg:
+          - "Host: {{ inventory_hostname }}"
+          - "Sistema: {{ ansible_distribution }}"
+          - "Version: {{ os_major }}"
+          - "Agente instalado: {{ zabbix_installed }}"
+          - "Repositorio: {{ zabbix_repo_url }}"
 
-    - name: Detectar version de OS
-      set_fact:
-        os_major: "{{ ansible_distribution_major_version }}"
+    - name: Instalar y configurar repositorio
+      when: not zabbix_installed
+      block:
+        - name: Verificar disponibilidad del RPM
+          ansible.builtin.uri:
+            url: "{{ zabbix_repo_url }}"
+            method: GET
+            status_code: 200
+            return_content: false
+            timeout: 30
 
-    - name: Verificar si zabbix-agent2 ya esta instalado
-      shell: rpm -q zabbix-agent2
-      register: agent_installed
-      ignore_errors: yes
-      changed_when: false
+        - name: Instalar repositorio Zabbix
+          ansible.builtin.dnf:
+            name: "{{ zabbix_repo_url }}"
+            state: present
+            disable_gpg_check: false
 
-    - name: Eliminar repo Zabbix anterior
-      shell: rpm -e zabbix-release
-      ignore_errors: yes
-      when: agent_installed.rc != 0
+        - name: Actualizar cache DNF
+          ansible.builtin.dnf:
+            update_cache: true
 
-    - name: Instalar repositorio Zabbix correcto para EL{{ os_major }}
-      shell: >
-        rpm -Uvh https://repo.zabbix.com/zabbix/{{ zabbix_version }}/release/rocky/{{ os_major }}/noarch/zabbix-release-latest-{{ zabbix_version }}.el{{ os_major }}.noarch.rpm
-      when: agent_installed.rc != 0
-      ignore_errors: yes
+        - name: Instalar Zabbix Agent 2
+          ansible.builtin.dnf:
+            name: zabbix-agent2
+            state: present
 
-    - name: Limpiar cache DNF
-      shell: dnf clean all -y
-      when: agent_installed.rc != 0
-
-    - name: Instalar zabbix-agent2
-      shell: dnf install -y zabbix-agent2
-      when: agent_installed.rc != 0
-
-    - name: Configurar Server
-      lineinfile:
+    - name: Configurar Zabbix Agent 2
+      ansible.builtin.lineinfile:
         path: /etc/zabbix/zabbix_agent2.conf
-        regexp: "^Server="
-        line: "Server={{ zabbix_server_ip }}"
-
-    - name: Configurar ServerActive
-      lineinfile:
-        path: /etc/zabbix/zabbix_agent2.conf
-        regexp: "^ServerActive="
-        line: "ServerActive={{ zabbix_server_ip }}"
-
-    - name: Configurar Hostname
-      lineinfile:
-        path: /etc/zabbix/zabbix_agent2.conf
-        regexp: "^Hostname="
-        line: "Hostname={{ inventory_hostname }}"
-
-    - name: Agregar HostMetadata
-      lineinfile:
-        path: /etc/zabbix/zabbix_agent2.conf
-        regexp: "^HostMetadata="
-        line: "HostMetadata=linux"
+        regexp: '^\s*#?\s*{{ item.key }}='
+        line: "{{ item.key }}={{ item.value }}"
         insertafter: EOF
+        backup: true
+      loop:
+        - key: Server
+          value: "{{ zabbix_server_ip }}"
+        - key: ServerActive
+          value: "{{ zabbix_server_ip }}"
+        - key: Hostname
+          value: "{{ inventory_hostname }}"
+        - key: HostMetadata
+          value: "{{ zabbix_metadata }}"
+      notify: Reiniciar agente
 
-    - name: Abrir puerto 10050 en firewall
-      shell: |
+    - name: Consultar estado de firewalld
+      ansible.builtin.command: systemctl is-active firewalld
+      register: firewalld_status
+      changed_when: false
+      failed_when: false
+
+    - name: Abrir puerto TCP 10050
+      ansible.builtin.command: >
         firewall-cmd --permanent --add-port=10050/tcp
-        firewall-cmd --reload
-      ignore_errors: yes
+      register: firewall_rule
+      when: firewalld_status.stdout == "active"
+      changed_when: "'ALREADY_ENABLED' not in firewall_rule.stderr"
+      notify: Recargar firewall
 
-    - name: Habilitar e iniciar zabbix-agent2
-      shell: |
-        systemctl enable zabbix-agent2
-        systemctl start zabbix-agent2
+    - name: Aplicar cambios pendientes
+      ansible.builtin.meta: flush_handlers
+
+    - name: Habilitar e iniciar agente
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+        enabled: true
+        state: started
 
     - name: Verificar estado del agente
-      shell: systemctl is-active zabbix-agent2
+      ansible.builtin.command: systemctl is-active zabbix-agent2
       register: agent_status
       changed_when: false
 
     - name: Resultado final
-      debug:
-        msg: "{{ inventory_hostname }} | Rocky Linux {{ os_major }} | Agente: {{ agent_status.stdout }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} |
+          {{ ansible_distribution }} {{ os_major }} |
+          Zabbix Agent 2: {{ agent_status.stdout }}
+
+  handlers:
+    - name: Recargar firewall
+      ansible.builtin.command: firewall-cmd --reload
+
+    - name: Reiniciar agente
+      ansible.builtin.systemd:
+        name: zabbix-agent2
+        state: restarted
