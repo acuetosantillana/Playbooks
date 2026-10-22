@@ -1,0 +1,170 @@
+# =============================================================================
+# Playbook: Instalación automatizada de Winlogbeat 7.5.2 en Windows
+# Fuente: "Manual de instalación agente Winlogbeat" GMV-MAGENTA-MAN-004
+#         v1.0 (06/02/2020) — MAGENTA (Santillana)
+# Secciones aplicadas: §3.1 Requisitos, §3.2 Descarga, §3.3 Configuración,
+#                      §3.4 Instalación, §3.5 Activar servicio, §3.6 Comprobar carga
+#
+# Requisitos previos en el proyecto Ansible/Semaphore:
+#   - files/col-002.crt        -> certificado del colector (entregado por GMV vía FTP, §3.4)
+#   - templates/winlogbeat.yml.j2
+# =============================================================================
+---
+# target_hosts se define desde Semaphore (Survey Variable o Extra Variables):
+#   - "windows"      -> todos los servidores del grupo del inventario
+#   - "SERVIDOR01"   -> un servidor específico
+#   - "SERVIDOR01,SERVIDOR02" -> varios servidores
+- name: Instalar agente Winlogbeat 7.5.2 (MAGENTA)
+  hosts: "{{ target_hosts | default('windows') }}"
+  gather_facts: no
+
+  vars:
+    winlogbeat_version: "7.5.2"
+    winlogbeat_zip_url: "https://artifacts.elastic.co/downloads/beats/winlogbeat/winlogbeat-{{ winlogbeat_version }}-windows-x86_64.zip"   # §3.2
+    winlogbeat_dir: 'C:\Program Files\Winlogbeat'          # §3.4
+    winlogbeat_tmp: 'C:\Windows\Temp'
+    colector_ip: "10.138.120.45"                           # §3.1 / §3.3 (*) cambiar según indique GMV
+    colector_puerto: 5443
+    cert_colector: "col-002.crt"                           # certificado del colector
+
+  tasks:
+
+    # ------------------------------------------------------------------
+    # OMITIR servidores que ya tienen Winlogbeat instalado y en ejecución
+    # ------------------------------------------------------------------
+    - name: Comprobar si el servicio winlogbeat ya existe
+      ansible.windows.win_service_info:
+        name: winlogbeat
+      register: svc_previo
+
+    - name: Omitir host (Winlogbeat ya instalado y en ejecución)
+      ansible.builtin.debug:
+        msg: "Winlogbeat ya instalado y en ejecución en {{ inventory_hostname }} — se omite."
+      when:
+        - svc_previo.exists
+        - svc_previo.services[0].state == 'started'
+
+    - name: Finalizar en este host si ya está instalado
+      ansible.builtin.meta: end_host
+      when:
+        - svc_previo.exists
+        - svc_previo.services[0].state == 'started'
+
+    # ------------------------------------------------------------------
+    # §3.1 REQUISITOS — comprobar conectividad hacia el Colector
+    # Equivalente a: New-Object System.Net.Sockets.TcpClient("IP", 5443)
+    # ------------------------------------------------------------------
+    - name: Comprobar conectividad con el Colector ({{ colector_ip }}:{{ colector_puerto }})
+      ansible.windows.win_shell: |
+        $t = New-Object System.Net.Sockets.TcpClient("{{ colector_ip }}", {{ colector_puerto }})
+        if (-not $t.Connected) { exit 1 }
+        $t.Close()
+      changed_when: false
+
+    - name: Verificar si winlogbeat.exe ya existe
+      ansible.windows.win_stat:
+        path: '{{ winlogbeat_dir }}\winlogbeat.exe'
+      register: winlogbeat_instalado
+
+    # ------------------------------------------------------------------
+    # §3.2 DESCARGA — obtener y descomprimir el instalable
+    # ------------------------------------------------------------------
+    - name: Descargar Winlogbeat {{ winlogbeat_version }}
+      ansible.windows.win_get_url:
+        url: "{{ winlogbeat_zip_url }}"
+        dest: '{{ winlogbeat_tmp }}\winlogbeat-{{ winlogbeat_version }}.zip'
+      when: not winlogbeat_instalado.stat.exists
+
+    # ------------------------------------------------------------------
+    # §3.4 INSTALACIÓN — crear C:\Program Files\Winlogbeat y copiar ficheros
+    # ------------------------------------------------------------------
+
+    - name: Crear carpeta de instalación
+      ansible.windows.win_file:
+        path: "{{ winlogbeat_dir }}"
+        state: directory
+
+    - name: Descomprimir el paquete
+      community.windows.win_unzip:
+        src: '{{ winlogbeat_tmp }}\winlogbeat-{{ winlogbeat_version }}.zip'
+        dest: "{{ winlogbeat_tmp }}"
+        creates: '{{ winlogbeat_tmp }}\winlogbeat-{{ winlogbeat_version }}-windows-x86_64'
+      when: not winlogbeat_instalado.stat.exists
+
+    - name: Copiar todos los ficheros a {{ winlogbeat_dir }}
+      ansible.windows.win_shell: |
+        Copy-Item -Path '{{ winlogbeat_tmp }}\winlogbeat-{{ winlogbeat_version }}-windows-x86_64\*' -Destination '{{ winlogbeat_dir }}' -Recurse -Force
+        Get-ChildItem -Path '{{ winlogbeat_dir }}' -Recurse | Unblock-File
+      when: not winlogbeat_instalado.stat.exists
+
+    # ------------------------------------------------------------------
+    # §3.3 CONFIGURACIÓN — desplegar winlogbeat.yml
+    # ------------------------------------------------------------------
+    - name: Desplegar winlogbeat.yml
+      ansible.windows.win_template:
+        src: templates/winlogbeat.yml.j2
+        dest: '{{ winlogbeat_dir }}\winlogbeat.yml'
+      notify: Reiniciar winlogbeat
+
+    # ------------------------------------------------------------------
+    # §3.4 — copiar el certificado del colector al directorio de winlogbeat
+    # ------------------------------------------------------------------
+    - name: Copiar certificado del colector ({{ cert_colector }})
+      ansible.windows.win_copy:
+        src: "files/{{ cert_colector }}"
+        dest: '{{ winlogbeat_dir }}\{{ cert_colector }}'
+      notify: Reiniciar winlogbeat
+
+    # ------------------------------------------------------------------
+    # §3.4 — probar la configuración (debe devolver "Config OK")
+    # ------------------------------------------------------------------
+    - name: Probar configuración (winlogbeat test config)
+      ansible.windows.win_shell: |
+        cd '{{ winlogbeat_dir }}'
+        .\winlogbeat.exe test config -c .\winlogbeat.yml -e
+      register: test_config
+      changed_when: false
+      failed_when: test_config.rc != 0
+
+    # ------------------------------------------------------------------
+    # §3.4 — instalar el servicio con install-service-winlogbeat.ps1
+    # ------------------------------------------------------------------
+    - name: Verificar si el servicio winlogbeat existe
+      ansible.windows.win_service_info:
+        name: winlogbeat
+      register: svc_info
+
+    - name: Instalar servicio winlogbeat
+      ansible.windows.win_shell: |
+        cd '{{ winlogbeat_dir }}'
+        PowerShell.exe -ExecutionPolicy UnRestricted -File .\install-service-winlogbeat.ps1
+      when: not svc_info.exists
+
+    # ------------------------------------------------------------------
+    # §3.5 ACTIVAR SERVICIO — arranque "Automático (inicio retrasado)" e iniciar
+    # ------------------------------------------------------------------
+    - name: Configurar arranque automático (inicio retrasado) e iniciar servicio
+      ansible.windows.win_service:
+        name: winlogbeat
+        start_mode: delayed
+        state: started
+
+    # ------------------------------------------------------------------
+    # §3.6 COMPROBAR CARGA — verificar que el proceso está en ejecución
+    # ------------------------------------------------------------------
+    - name: Comprobar que winlogbeat.exe está en ejecución
+      ansible.windows.win_shell: Get-Process -Name winlogbeat | Select-Object Id, ProcessName, WS
+      register: carga
+      changed_when: false
+
+    - name: Mostrar estado del proceso
+      ansible.builtin.debug:
+        var: carga.stdout_lines
+
+  handlers:
+    - name: Reiniciar winlogbeat
+      ansible.windows.win_service:
+        name: winlogbeat
+        state: restarted
+      # Solo aplica si el servicio ya existe (en instalación nueva se inicia en §3.5)
+      ignore_errors: yes
