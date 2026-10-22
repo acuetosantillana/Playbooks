@@ -6,7 +6,7 @@
 #                      §3.4 Instalación, §3.5 Activar servicio, §3.6 Comprobar carga
 #
 # Requisitos previos en el proyecto Ansible/Semaphore:
-#   - files/col-002.crt        -> certificado del colector (entregado por GMV vía FTP, §3.4)
+#   - templates/col-002.crt    -> certificado del colector (entregado por GMV vía FTP, §3.4)
 #   - templates/winlogbeat.yml.j2
 # =============================================================================
 ---
@@ -111,7 +111,7 @@
     # ------------------------------------------------------------------
     - name: Copiar certificado del colector ({{ cert_colector }})
       ansible.windows.win_copy:
-        src: "files/{{ cert_colector }}"
+        src: "templates/{{ cert_colector }}"
         dest: '{{ winlogbeat_dir }}\{{ cert_colector }}'
       notify: Reiniciar winlogbeat
 
