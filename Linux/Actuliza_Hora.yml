@@ -1,0 +1,42 @@
+---
+- name: Sincronizar tiempo NTP con Windows
+  hosts: all
+  become: yes
+  gather_facts: false
+  tasks:
+
+    - name: 1. Aplicar cambios a la hora y configurar fuentes
+      raw: |
+        # Validar si ya está configurado el servidor Windows
+        if ! grep -q "10.138.120.13" /etc/chrony.conf; then
+          # Comentar el pool original de internet si existe
+          sed -i 's/^\(pool 2.rocky.pool.ntp.org.*\)/# \1/g' /etc/chrony.conf
+          
+          # Inyectar las fuentes de Windows de Santillana
+          echo -e "\n# CONFIGURACION NTP WINDOWS SANTILLANA" >> /etc/chrony.conf
+          echo "server 10.138.120.13 iburst prefer" >> /etc/chrony.conf
+          echo "server 10.138.120.102 iburst" >> /etc/chrony.conf
+          
+          # Habilitar y reiniciar el servicio chronyd
+          systemctl enable chronyd
+          systemctl restart chronyd
+          
+          # Forzar el salto de tiempo inmediato hacia Windows
+          chronyc -a makestep
+          echo "Configuracion aplicada ahora"
+        else
+          echo "Omitido (Ya estaba configurado)"
+        fi
+      register: raw_result
+
+    - name: 2. Verificar estado de la sincronizacion (Se ejecuta siempre)
+      raw: chronyc tracking | grep -E "Reference ID|System time"
+      register: time_status
+
+    - name: 3. Mostrar resultado en consola
+      debug:
+        msg: 
+          - "Servidor: {{ inventory_hostname }}"
+          - "Resultado script: {{ raw_result.stdout_lines | last }}"
+          - "Estado actual:"
+          - "{{ time_status.stdout_lines }}"

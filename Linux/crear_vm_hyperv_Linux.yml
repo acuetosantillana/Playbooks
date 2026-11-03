@@ -1,5 +1,5 @@
 ---
-- name: Crear VM Rocky Linux 9.6 en Hyper-V Failover Cluster
+- name: Crear VM Rocky Linux 9 en Hyper-V Failover Cluster
   hosts: "{{ hyperv_host }}"
   gather_facts: no
 
@@ -26,7 +26,7 @@
       - 'C:\\ClusterStorage\\Volume7'
 
     # ISO Rocky por defecto en NAS
-    iso_path_default: '\\10.138.120.130\isos\Rocky-9.6-x86_64-dvd.iso'
+    iso_path_default: '\\10.138.120.130\isos\Rocky-9-x86_64-dvd.iso'
 
     # NAS para el SMB Global Mapping
     nas_server: '10.138.120.130'
@@ -124,7 +124,7 @@
         path: "{{ ks_dir }}"
         state: directory
 
-    - name: Generar ks.cfg (Kickstart) para Rocky Linux 9.6
+    - name: Generar ks.cfg (Kickstart) para Rocky Linux 9
       ansible.windows.win_template:
         src: "templates/ks.cfg.j2"
         dest: "{{ ks_cfg_path }}"
@@ -179,7 +179,7 @@
     # -------------------------------------------------------------------
     # 4) Crear VM en Cluster con CSV
     # -------------------------------------------------------------------
-    - name: Crear VM Rocky Linux 9.6 como Highly Available en Cluster
+    - name: Crear VM Rocky Linux 9 como Highly Available en Cluster
       ansible.windows.win_powershell:
         script: |
           param(
@@ -281,20 +281,17 @@
           }
 
           # ----------------------------------------------------------------
-          # 3. Crear estructura de directorios en CSV
+          # 3. Definir rutas
+          #    New-VM con -Path $selectedCsv crea automáticamente:
+          #      CSV\<VmName>\                   <- carpeta raíz de la VM
+          #      CSV\<VmName>\Virtual Machines\  <- archivos de config
+          #    Después creamos Virtual Hard Disks y el VHDX.
           # ----------------------------------------------------------------
-          $vmRoot = Join-Path $selectedCsv $VmName
-          $vhdPath = Join-Path $vmRoot "Virtual Hard Disks\$VmName.vhdx"
-          $vhdDir  = Split-Path $vhdPath -Parent
+          $vmRoot  = Join-Path $selectedCsv $VmName
+          $vhdDir  = Join-Path $vmRoot "Virtual Hard Disks"
+          $vhdPath = Join-Path $vhdDir "$VmName.vhdx"
 
-          foreach ($dir in @($vmRoot, $vhdDir)) {
-            if (-not (Test-Path $dir)) {
-              New-Item -ItemType Directory -Path $dir -Force | Out-Null
-            }
-          }
-          Write-Host "✓ Estructura de directorios creada en CSV"
-
-          # 4. Validar ISOs
+          # 4. Validar ISOs antes de crear nada
           if (-not (Test-Path $IsoPath)) {
             throw "No se puede acceder a la ISO de Rocky: $IsoPath"
           }
@@ -302,27 +299,34 @@
             throw "No se puede acceder a la ISO Kickstart: $KsIsoPath"
           }
 
-          # 5. Crear VHDX en CSV
-          if (-not (Test-Path $vhdPath)) {
-            New-VHD -Path $vhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
-            Write-Host "✓ VHD creado: $vhdPath"
-          } else {
-            Write-Host "VHD ya existía: $vhdPath"
-          }
-
-          # 6. Crear VM (primero local, luego se hace HA)
+          # 5. Crear VM primero — Hyper-V genera CSV\<VmName>\ y Virtual Machines\
           $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
           if (-not $vm) {
+            # -Path = CSV raíz; Hyper-V agrega subcarpeta con nombre de VM
             New-VM -Name $VmName `
                    -MemoryStartupBytes $MemoryBytes `
                    -Generation 2 `
                    -SwitchName $SwitchName `
-                   -Path $vmRoot `
+                   -Path $selectedCsv `
                    -NoVHD | Out-Null
             $vm = Get-VM -Name $VmName
             Write-Host "✓ VM creada: $VmName"
           } else {
             Write-Host "VM ya existía: $VmName"
+          }
+
+          # 6. Ahora que existe CSV\<VmName>\, crear Virtual Hard Disks y VHDX
+          if (-not (Test-Path $vhdDir)) {
+            New-Item -ItemType Directory -Path $vhdDir -Force | Out-Null
+          }
+          Write-Host "  Raíz VM : $vmRoot"
+          Write-Host "  VHD dir : $vhdDir"
+
+          if (-not (Test-Path $vhdPath)) {
+            New-VHD -Path $vhdPath -SizeBytes $DiskBytes -Dynamic | Out-Null
+            Write-Host "✓ VHD creado: $vhdPath"
+          } else {
+            Write-Host "VHD ya existía: $vhdPath"
           }
 
           # 7. Configurar VLAN si es necesario
@@ -513,7 +517,7 @@
           IpAddress: "{{ vm_ip }}"
           TimeoutSeconds: 1800   # 30 minutos
 
-    - name: "[Post-install] Esperar puerto SSH 22 activo en la VM (máx 10 min)"
+    - name: "[Post-install] Esperar puerto SSH 22 activo en la VM (máx 45 min)"
       ansible.windows.win_powershell:
         script: |
           param([string]$IpAddress, [int]$TimeoutSeconds)
@@ -548,7 +552,7 @@
           }
         parameters:
           IpAddress: "{{ vm_ip }}"
-          TimeoutSeconds: 600    # 10 minutos adicionales tras el ping
+          TimeoutSeconds: 2400    # 45 minutos adicionales tras el ping
 
     # -------------------------------------------------------------------
     # 6) Desmontar DVDs de la VM

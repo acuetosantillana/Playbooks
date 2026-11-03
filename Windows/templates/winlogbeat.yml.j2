@@ -1,0 +1,23 @@
+# Configuración Winlogbeat 7.5.2 — MAGENTA (Santillana)
+# Fuente: Manual GMV-MAGENTA-MAN-004 v1.0, §3.3 CONFIGURACIÓN
+# Gestionado por Ansible — no editar manualmente
+
+winlogbeat.event_logs:
+  - name: Application
+    ignore_older: 1h
+  - name: System
+    ignore_older: 1h
+  - name: Security
+    ignore_older: 1h
+  - name: DNS Server
+    ignore_older: 1h
+
+fields:
+  proyecto: magenta
+
+output.logstash:
+  hosts: ["{{ colector_ip }}:{{ colector_puerto }}"]
+  ssl.certificate_authorities: ["C:\\Program Files\\Winlogbeat\\{{ cert_colector }}"]
+  bulk_max_size: 1600
+  worker: 2
+  compression_level: 0
