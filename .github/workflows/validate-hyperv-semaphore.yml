@@ -27,6 +27,7 @@ jobs:
           ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/crear_base_windows_2025.yml -e hyperv_host=SMXHYPVA
           ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/crear_base_rocky_9.yml -e hyperv_host=SMXHYPVB
           ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/diagnosticar_base.yml -e hyperv_host=SMXHYPVA
+          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/recuperar_bloqueo_base.yml -e hyperv_host=SMXHYPVA
           bash -n HyperV-Semaphore/files/sellar-rocky.sh
   powershell-generation:
     runs-on: windows-latest
@@ -38,3 +39,6 @@ jobs:
       - name: Verificar preparacion de ISO UEFI sin teclado con simulaciones
         shell: pwsh
         run: ./HyperV-Semaphore/tests/Verificar-ISOAutomatico.ps1
+      - name: Verificar recuperacion conservando bloqueos y protegiendo VM existentes
+        shell: pwsh
+        run: ./HyperV-Semaphore/tests/Verificar-Recuperacion.ps1
