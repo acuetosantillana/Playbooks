@@ -44,3 +44,6 @@ jobs:
       - name: Verificar recuperacion conservando bloqueos y protegiendo VM existentes
         shell: pwsh
         run: ./HyperV-Semaphore/tests/Verificar-Recuperacion.ps1
+      - name: Verificar finalizacion sin reinstalar y retirada de DVD temporales
+        shell: powershell
+        run: ./HyperV-Semaphore/tests/Verificar-Finalizacion.ps1

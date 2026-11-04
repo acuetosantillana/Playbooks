@@ -34,9 +34,15 @@ actions=set()
 for p in plays[1:]:
     for phase in ('pre_tasks','tasks','post_tasks'):
         for block in p.get(phase,[]):
-            assert block['when'].startswith('accion == '), p['name']
-            actions.add(block['when'].split("'")[1])
-assert actions=={'crear_base','clonar','diagnosticar','recuperar_reserva','limpiar'}
+            guard=block['when']
+            assert guard.startswith(('accion == ', 'accion in ')), p['name']
+            actions.update(__import__('re').findall("'([^']+)'",guard))
+assert actions=={'crear_base','finalizar_base','clonar','diagnosticar','recuperar_reserva','limpiar'}
+for p in plays:
+    if p['name'] in ['Esperar y verificar el sistema instalado','Desmontar medios y finalizar despliegue',
+                     'Sellar Windows mediante PowerShell Direct','Sellar Rocky y preparar cloud-init para los futuros clones',
+                     'Publicar disco maestro y liberar la IP de instalacion']:
+        assert p['tasks'][0]['when']=="accion in ['crear_base', 'finalizar_base']"
 preflight=plays[0]['tasks']
 assert any('Comprobar herramientas de Rocky antes' in t['name'] for t in preflight)
 print('OK: un archivo, acciones excluyentes y GRUB con Install + timeout 3 segundos.')

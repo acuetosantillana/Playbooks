@@ -8,7 +8,7 @@ Rama: codex/hyperv-semaphore-nuevas-tareas
 Inventario: Hipervisores Windows. Grupo: Variables-VM - Windows.
 
 Sistema operativo: Windows / Rocky.
-Operacion: crear_base / clonar / diagnosticar.
+Operacion: crear_base / finalizar_base / clonar / diagnosticar.
 Hipervisor: SMXHYPVA / SMXHYPVB. VLAN: 120 / 96.
 Nombre e IP vacios: base del sistema y 10.138.120.5.
 Clones: indicar nombre e IP propios.
@@ -17,6 +17,11 @@ ISO alternativa opcional; credenciales NAS del grupo existente.
 Idioma Windows actual: en-US. Administrador integrado: Administrator.
 
 crear_base incluye instalacion, verificacion, sellado, apagado y captura.
+finalizar_base continua una base instalada y encendida si fallo antes del sellado.
+Valida UUID, manifiesto, disco y reserva; autentica y verifica otra vez el invitado.
+No reinstala ni crea otra VM. Usa la misma IP y las credenciales de esa instalacion.
+Retira los dispositivos DVD temporales, confirma su retirada, sella y publica.
+Si el sellado ya comenzo, la VM esta apagada o existe la version, exige revision.
 Windows: respuestas integradas en ISO UEFI sin tecla.
 Rocky: Install predeterminado, timeout 3 segundos y Kickstart en OEMDRV.
 Rocky prepara GRUB y efiboot con bibliotecas Python temporales, sin root.

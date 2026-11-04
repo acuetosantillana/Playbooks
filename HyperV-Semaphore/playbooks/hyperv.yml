@@ -16,7 +16,7 @@
     ansible.builtin.assert:
       that:
       - ansible_play_hosts_all | length == 1
-      - accion in ['crear_base', 'clonar', 'diagnosticar', 'recuperar_reserva', 'limpiar']
+      - accion in ['crear_base', 'clonar', 'diagnosticar', 'finalizar_base', 'recuperar_reserva', 'limpiar']
       - vm_os in ['Windows', 'Rocky']
       - accion != 'limpiar' or vm_os == 'Windows'
   - name: Aplicar valores base; las variables del formulario tienen prioridad
@@ -364,6 +364,35 @@
             if vm_os == ''Rocky'' else deployment.result.os_iso }}'
           VlanId: '{{ vm_vlan | int }}'
       register: created_vm
+  - name: Recuperar la base instalada sin reinstalar
+    when: accion == 'finalizar_base'
+    block:
+    - name: Validar la reserva y la identidad de la base existente
+      ansible.windows.win_powershell:
+        path: '{{ playbook_dir }}/../scripts/Reanudar-Base.ps1'
+        error_action: stop
+        parameters:
+          VmName: '{{ vm_name }}'
+          Sistema: '{{ vm_os }}'
+          IPAddress: '{{ vm_ip }}'
+          Library: '{{ template_library }}'
+          TemplateId: '{{ template_id }}'
+          CsvVolumes: '{{ csv_volumes }}'
+      register: resumed_base
+      no_log: true
+    - name: Recuperar las rutas y reserva para completar la misma base
+      ansible.builtin.set_fact:
+        deployment:
+          result:
+            root: '{{ resumed_base.result.root }}'
+            csv: '{{ resumed_base.result.csv }}'
+        base_ip_lock:
+          result:
+            token: '{{ resumed_base.result.token }}'
+      no_log: true
+  - name: Registrar la base nueva o existente para verificarla otra vez
+    when: accion in ['crear_base', 'finalizar_base']
+    block:
     - name: Crear archivo temporal de huellas SSH exclusivo de esta tarea
       ansible.builtin.tempfile:
         state: file
@@ -395,7 +424,7 @@
   any_errors_fatal: true
   tasks:
   - name: Operacion crear_base
-    when: accion == 'crear_base'
+    when: accion in ['crear_base', 'finalizar_base']
     block:
     - name: Esperar conexion autenticada desde el runner de Semaphore
       ansible.builtin.wait_for_connection:
@@ -447,7 +476,7 @@
     ansible_winrm_transport: credssp
   tasks:
   - name: Operacion crear_base
-    when: accion == 'crear_base'
+    when: accion in ['crear_base', 'finalizar_base']
     block:
     - name: Exigir verificacion antes de limpiar material de instalacion
       ansible.builtin.assert:
@@ -489,7 +518,7 @@
     ansible_winrm_transport: credssp
   tasks:
   - name: Operacion crear_base
-    when: accion == 'crear_base'
+    when: accion in ['crear_base', 'finalizar_base']
     block:
     - name: Exigir verificacion previa de la base recien instalada
       ansible.builtin.assert:
@@ -525,7 +554,7 @@
   any_errors_fatal: true
   tasks:
   - name: Operacion crear_base
-    when: accion == 'crear_base'
+    when: accion in ['crear_base', 'finalizar_base']
     block:
     - name: Preparar y apagar la base Rocky
       when: expected_system == 'Rocky'
@@ -563,7 +592,7 @@
     ansible_winrm_transport: credssp
   tasks:
   - name: Operacion crear_base
-    when: accion == 'crear_base'
+    when: accion in ['crear_base', 'finalizar_base']
     block:
     - name: Esperar apagado y capturar una version nueva de la imagen
       ansible.windows.win_powershell:
