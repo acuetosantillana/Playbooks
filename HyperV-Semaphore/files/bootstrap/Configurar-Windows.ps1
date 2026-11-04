@@ -25,13 +25,22 @@ try {
     }
     $dns = @($config.vm_dns1, $config.vm_dns2) | Where-Object { $_ }
     Set-DnsClientServerAddress -InterfaceIndex $index -ServerAddresses $dns
-    New-NetFirewallRule -Name 'Lab-ICMPv4' -DisplayName 'Lab ICMPv4' -Direction Inbound -Protocol ICMPv4 -IcmpType 8 -Action Allow -Profile Any | Out-Null
+    if (Get-NetFirewallRule -Name 'Lab-ICMPv4' -ErrorAction SilentlyContinue) {
+        Set-NetFirewallRule -Name 'Lab-ICMPv4' -Enabled True -Action Allow -Profile Any
+    } else {
+        New-NetFirewallRule -Name 'Lab-ICMPv4' -DisplayName 'Lab ICMPv4' -Direction Inbound -Protocol ICMPv4 -IcmpType 8 -Action Allow -Profile Any | Out-Null
+    }
     # Se conserva el puerto solicitado y se habilita NLA.
     Set-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0
     $rdpKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
     Set-ItemProperty $rdpKey -Name UserAuthentication -Value 1
     Set-ItemProperty $rdpKey -Name PortNumber -Value $config.rdp_port
-    New-NetFirewallRule -Name 'Lab-RDP' -DisplayName 'Lab RDP' -Direction Inbound -Protocol TCP -LocalPort $config.rdp_port -Action Allow -Profile Any | Out-Null
+    if (Get-NetFirewallRule -Name 'Lab-RDP' -ErrorAction SilentlyContinue) {
+        Set-NetFirewallRule -Name 'Lab-RDP' -Enabled True -Action Allow -Profile Any
+        Get-NetFirewallRule -Name 'Lab-RDP' | Get-NetFirewallPortFilter | Set-NetFirewallPortFilter -LocalPort $config.rdp_port
+    } else {
+        New-NetFirewallRule -Name 'Lab-RDP' -DisplayName 'Lab RDP' -Direction Inbound -Protocol TCP -LocalPort $config.rdp_port -Action Allow -Profile Any | Out-Null
+    }
     Enable-PSRemoting -Force -SkipNetworkProfileCheck
     # WinRM con autenticacion integrada; no habilitar Basic ni AllowUnencrypted.
     Set-Item WSMan:\localhost\Service\AllowUnencrypted -Value $false

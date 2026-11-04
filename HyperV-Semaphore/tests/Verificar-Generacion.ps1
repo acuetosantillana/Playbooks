@@ -36,4 +36,36 @@ $config | ConvertTo-Json | Set-Content $json
 $rejected=$false
 try { & $generator -Sistema Windows -Configuracion $json -Salida (Join-Path $testRoot 'invalid') -AdminPassword $password } catch { $rejected=$_.Exception.Message -match 'contigua' }
 if (-not $rejected) { throw 'No se rechazo la mascara invalida.' }
+$config.vm_mask=24
+$config.solo_base=$true
+$config | ConvertTo-Json | Set-Content $json
+$baseOutput=Join-Path $testRoot 'rocky-base'
+& $generator -Sistema Rocky -Configuracion $json -Salida $baseOutput -RootPasswordHash $hash -LinuxPasswordHash $hash
+$baseKS=Get-Content (Join-Path $baseOutput 'ks.cfg') -Raw
+if ($baseKS -match 'docker|nginx|@development' -or $baseKS -notmatch '(?m)^cloud-init$') { throw 'La base Rocky no es minima.' }
+$personalizer=Join-Path $root 'files\bootstrap\Personalizar-Clon.ps1'
+foreach ($system in @('Windows','Rocky')) {
+    $cloneRoot=Join-Path $testRoot ('clone-'+$system)
+    New-Item -ItemType Directory -Path (Join-Path $cloneRoot 'Provisioning') | Out-Null
+    $identity=[guid]::NewGuid().ToString()
+    @{name=$config.vm_name;system=$system;instance_id=$identity;template='test-base-v1';mac='020102030405';disk='NO-SE-MONTA.vhdx'} | ConvertTo-Json | Set-Content (Join-Path $cloneRoot 'deployment.json')
+    & $personalizer -Root $cloneRoot -RequestFile $json -AdminPassword $password -RootHash $hash -UserHash $hash -RenderOnly
+    if (Test-Path (Join-Path $cloneRoot 'Provisioning\personalized.txt')) { throw 'Una vista previa no debe habilitar el arranque.' }
+    if ($system -eq 'Windows') {
+        [xml]$cloneXML=Get-Content (Join-Path $cloneRoot 'Provisioning\preview\Unattend.xml') -Raw
+        $cloneNs=[Xml.XmlNamespaceManager]::new($cloneXML.NameTable)
+        $cloneNs.AddNamespace('u','urn:schemas-microsoft-com:unattend')
+        if ($cloneXML.SelectSingleNode('//u:ComputerName',$cloneNs).InnerText -ne $config.vm_name) { throw 'Hostname Windows del clon incorrecto.' }
+        if ($cloneXML.SelectSingleNode('//u:AdministratorPassword/u:Value',$cloneNs).InnerText -ne 'Prueba<&>''9!SoloFicticia') { throw 'Contrasena XML del clon mal escapada.' }
+        if ($cloneXML.SelectNodes('//u:settings[@pass="windowsPE"]',$cloneNs).Count -ne 0) { throw 'El clon no debe ejecutar Windows Setup desde ISO.' }
+    } else {
+        $seedRoot=Join-Path $cloneRoot 'Provisioning\seed'
+        $metadata=Get-Content (Join-Path $seedRoot 'meta-data') -Raw | ConvertFrom-Json
+        $userData=((Get-Content (Join-Path $seedRoot 'user-data') -Raw) -replace '^#cloud-config\s*','') | ConvertFrom-Json
+        $network=Get-Content (Join-Path $seedRoot 'network-config') -Raw | ConvertFrom-Json
+        if ($metadata.'instance-id' -ne $identity -or $network.config[0].mac_address -ne '02:01:02:03:04:05' -or $network.config[0].subnets[0].address -ne '192.0.2.20/24') { throw 'Identidad/red de cloud-init incorrectas.' }
+        if ($userData.users[0].passwd -notlike '$6$*' -or $userData.users[0].name -ne 'adm') { throw 'Usuario/hash de cloud-init incorrectos.' }
+    }
+}
 'OK: sintaxis PowerShell, XML escapado, idioma, administrador, secuencia unica, red /23, hashes y rechazo de mascara invalida.'
+'OK: base minima y personalizacion de clones Windows/Rocky sin arrancar ni montar discos.'

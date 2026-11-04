@@ -16,8 +16,8 @@ $apiRoot = $BaseUrl.TrimEnd('/') + '/api/project/' + $ProjectId
 $templates = @(Invoke-RestMethod -Uri ($apiRoot + '/templates') -Headers $headers)
 $requests = @()
 foreach ($spec in @(
-    @{ Name='NUEVO - Windows Server 2025 - Hyper-V HA'; Playbook='HyperV-Semaphore/playbooks/crear_windows_2025.yml'; Source=$WindowsTemplateOrigen; Windows=$true },
-    @{ Name='NUEVO - Rocky Linux 9 - Hyper-V HA'; Playbook='HyperV-Semaphore/playbooks/crear_rocky_9.yml'; Source=$RockyTemplateOrigen; Windows=$false }
+    @{ Name='VM desde plantilla - Windows Server 2025'; Playbook='HyperV-Semaphore/playbooks/crear_windows_2025.yml'; Source=$WindowsTemplateOrigen; Windows=$true; Image='ws2025-base-v1' },
+    @{ Name='VM desde plantilla - Rocky Linux 9'; Playbook='HyperV-Semaphore/playbooks/crear_rocky_9.yml'; Source=$RockyTemplateOrigen; Windows=$false; Image='rocky9-base-v1' }
 )) {
     if ($templates | Where-Object name -eq $spec.Name) { throw "La tarea $($spec.Name) ya existe. No se modifica ni duplica." }
     $source = Invoke-RestMethod -Uri ($apiRoot + '/templates/' + $spec.Source) -Headers $headers
@@ -26,7 +26,6 @@ foreach ($spec in @(
     if ($repo.monorepo -and $repo.git_branch -ne $Branch) { throw 'El repositorio compartido no permite esta rama. Crear una entrada de repositorio separada antes de registrar.' }
     $survey = @()
     foreach ($field in @(
-        @('hyperv_host','Nodo ejecutor (SMXHYPVA o SMXHYPVB)','','SMXHYPVA',$true),
         @('vm_name','Nombre de la nueva VM','','',$true),
         @('memory_gb','Memoria GiB','int',$(if ($spec.Windows) {'8'} else {'4'}),$true),
         @('cpu','vCPU','int','4',$true),
@@ -35,23 +34,21 @@ foreach ($spec in @(
         @('vm_mask','Prefijo CIDR','int','24',$true),
         @('vm_gateway','Gateway','','',$true),
         @('vm_dns1','DNS principal','','',$true),
-        @('vm_dns2','DNS secundario (opcional)','','',$false),
-        @('vm_vlan','VLAN (0 sin etiqueta)','int','0',$true),
-        @('iso_path','Ruta ISO (opcional)','','',$false)
+        @('vm_dns2','DNS secundario (opcional)','','',$false)
     )) {
         $survey += @{ name=$field[0]; title=$field[1]; type=$field[2]; default_value=$field[3]; required=$field[4] }
     }
+    $survey += @{name='hyperv_host';title='Hipervisor';type='enum';required=$true;values=@(@{name='SMXHYPVA';value='SMXHYPVA'},@{name='SMXHYPVB';value='SMXHYPVB'})}
+    $survey += @{name='vm_vlan';title='VLAN ID';type='enum';required=$true;values=@(@{name='120';value='120'},@{name='96';value='96'})}
+    $survey += @{name='template_id';title='Plantilla base';type='enum';required=$true;default_value=$spec.Image;values=@(@{name=$spec.Image;value=$spec.Image})}
     if ($spec.Windows) {
-        $survey += @{ name='vm_image_index'; title='Indice de la edicion en esta ISO'; type='int'; required=$true }
-        $survey += @{ name='HV_WINDOWS_PASSWORD'; title='Contrasena del administrador Windows'; type='secret'; target='env'; required=$true }
+        $survey += @{ name='admin_password'; title='Contrasena del administrador Windows'; type='secret'; required=$true }
     } else {
         $survey += @{ name='linux_user'; title='Usuario Rocky'; type=''; default_value='adm'; required=$true }
-        $survey += @{ name='HV_ROOT_PASSWORD'; title='Contrasena root'; type='secret'; target='env'; required=$true }
-        $survey += @{ name='HV_LINUX_PASSWORD'; title='Contrasena del usuario Rocky'; type='secret'; target='env'; required=$true }
+        $survey += @{ name='root_password'; title='Contrasena root'; type='secret'; required=$true }
+        $survey += @{ name='linux_password'; title='Contrasena del usuario Rocky'; type='secret'; required=$true }
     }
-    $survey += @{ name='HV_NAS_USER'; title='Usuario NAS (opcional)'; type=''; target='env'; required=$false }
-    $survey += @{ name='HV_NAS_PASSWORD'; title='Contrasena NAS (opcional)'; type='secret'; target='env'; required=$false }
-    $request = @{ project_id=$ProjectId; view_id=$ViewId; name=$spec.Name; playbook=$spec.Playbook; inventory_id=$source.inventory_id; repository_id=$source.repository_id; environment_id=$source.environment_id; git_branch=$Branch; app='ansible'; arguments='[]'; allow_override_args_in_task=$false; survey_vars=$survey; description='Nueva instalacion desde ISO en CSV, registro HA y verificacion autenticada. No modifica VM existentes.' }
+    $request = @{ project_id=$ProjectId; view_id=$ViewId; name=$spec.Name; playbook=$spec.Playbook; inventory_id=$source.inventory_id; repository_id=$source.repository_id; environment_id=$source.environment_id; git_branch=$Branch; app='ansible'; arguments='[]'; allow_override_args_in_task=$false; survey_vars=$survey; description='Copia de imagen VHDX ya instalada, personalizacion de primer arranque y registro HA.' }
     if ($EnvironmentId -gt 0) { $request.environment_id=$EnvironmentId }
     if ($source.vaults) { $request.vaults=$source.vaults }
     $requests += $request

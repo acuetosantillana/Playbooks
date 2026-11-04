@@ -47,14 +47,14 @@ for file in root.rglob("*.yml"):
     count += 1
 for file in root.glob("examples/*.json"):
     json.loads(file.read_text(encoding="utf-8"))
-playbook = yaml.load((root / "playbooks/desplegar.yml").read_text(), Loader=UniqueLoader)
-assert len(playbook) == 3
-for play in playbook:
-    for task in play.get("tasks", []):
-        module = task.get("ansible.windows.win_powershell", {})
-        if "path" in module:
-            relative = module["path"].replace("{{ playbook_dir }}/", "")
-            assert (root / "playbooks" / relative).resolve().is_file(), relative
+for source in root.glob('playbooks/*.yml'):
+    playbook = yaml.load(source.read_text(), Loader=UniqueLoader)
+    for play in playbook:
+        for task in play.get("tasks", []):
+            module = task.get("ansible.windows.win_powershell", {})
+            if "path" in module:
+                relative = module["path"].replace("{{ playbook_dir }}/", "")
+                assert (root / "playbooks" / relative).resolve().is_file(), relative
 
 ks_text = (root / "files/bootstrap/rocky9.ks.tpl").read_text(encoding="utf-8")
 values = {
@@ -73,6 +73,9 @@ try:
     from pykickstart.version import makeVersion
     parser = KickstartParser(makeVersion("RHEL9"), followIncludes=False, errorsAreFatal=True)
     parser.readKickstartFromString(rendered)
+    minimal = env.from_string((root/'files/bootstrap/rocky9-base.ks.tpl').read_text()).render(**values)
+    KickstartParser(makeVersion('RHEL9'), followIncludes=False, errorsAreFatal=True).readKickstartFromString(minimal)
+    assert 'cloud-init' in minimal and 'docker' not in minimal and 'nginx' not in minimal
 except ImportError as exc:
     raise SystemExit("Instala pykickstart para validar el KS RHEL9") from exc
-print(f"OK: {count} YAML, JSON de ejemplo, sintaxis Jinja, referencias y KS RHEL9.")
+print(f"OK: {count} YAML, JSON de ejemplo, sintaxis Jinja, referencias y dos KS RHEL9.")

@@ -1,0 +1,18 @@
+---
+- ansible.builtin.import_playbook: reservar_base.yml
+  vars: &base_rocky
+    vm_os: Rocky
+    solo_base: true
+    vm_name: TPL-ROCKY9
+    template_id: rocky9-base-v1
+    vm_ip: 10.138.120.5
+    vm_vlan: 120
+    vm_mask: 24
+    memory_gb: 4
+    cpu: 4
+    disk_gb: 100
+    v_switch: SETvSwitch
+- ansible.builtin.import_playbook: desplegar.yml
+  vars: *base_rocky
+- ansible.builtin.import_playbook: sellar_y_capturar.yml
+  vars: *base_rocky

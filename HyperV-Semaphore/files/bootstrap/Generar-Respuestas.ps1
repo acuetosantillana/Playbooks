@@ -97,7 +97,9 @@ if ($Sistema -eq 'Windows') {
     }
     $values.vm_dns_suffix = ''
     if ($values.vm_dns2) { $values.vm_dns_suffix = ',' + $values.vm_dns2 }
-    $rendered = Get-Content (Join-Path $PSScriptRoot 'rocky9.ks.tpl') -Raw
+    $ksTemplate = 'rocky9.ks.tpl'
+    if ($values.solo_base -eq $true) { $ksTemplate = 'rocky9-base.ks.tpl' }
+    $rendered = Get-Content (Join-Path $PSScriptRoot $ksTemplate) -Raw
     $rendered = [regex]::Replace($rendered, '\{\{\s*(\w+)\s*\}\}', {
         param($match)
         $key = $match.Groups[1].Value

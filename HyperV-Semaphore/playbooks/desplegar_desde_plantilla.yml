@@ -1,0 +1,202 @@
+---
+- name: Crear una VM nueva copiando una imagen base ya instalada
+  hosts: "{{ hyperv_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../config/cluster.yml, ../config/plantillas.yml]
+  vars:
+    ansible_winrm_transport: credssp
+  pre_tasks:
+    - name: Validar seleccion de hipervisor, VLAN y plantilla
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length == 1
+          - template_id in template_catalog
+          - template_catalog[template_id].system == vm_os
+          - vm_vlan | int in allowed_vlans
+          - vm_name is match('^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$')
+          - vm_os != 'Windows' or vm_name | length <= 15
+          - memory_gb | int >= 4
+          - cpu | int >= 1
+          - cpu | int <= 64
+          - disk_gb | int >= 100
+          - vm_ip != base_install_ip
+          - vm_mask | int >= 1
+          - vm_mask | int <= 30
+          - vm_gateway | length > 0
+          - vm_dns1 | length > 0
+        fail_msg: Completa la configuracion; 10.138.120.5 esta reservada para instalar las bases.
+    - name: Validar credenciales nuevas del invitado
+      ansible.builtin.assert:
+        that:
+          - (vm_os == 'Windows' and admin_password | length > 0) or (vm_os == 'Rocky' and root_password | length > 0 and linux_password | length > 0)
+      no_log: true
+  tasks:
+    - name: Copiar el VHDX completo y crear VM nueva apagada
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Clonar-Plantilla.ps1"
+        error_action: stop
+        parameters:
+          VmName: "{{ vm_name }}"
+          TemplateId: "{{ template_id }}"
+          Sistema: "{{ vm_os }}"
+          Library: "{{ template_library }}"
+          ClusterNodes: "{{ cluster_nodes }}"
+          CsvVolumes: "{{ csv_volumes }}"
+          SwitchName: "{{ v_switch | default(clone_switch, true) }}"
+          MemoryBytes: "{{ (memory_gb | int) * 1073741824 }}"
+          DiskBytes: "{{ (disk_gb | int) * 1073741824 }}"
+          CpuCount: "{{ cpu | int }}"
+          VlanId: "{{ vm_vlan | int }}"
+          ReserveBytes: "{{ (reserve_gb | int) * 1073741824 }}"
+      register: deployment
+    - name: Copiar herramientas de personalizacion al directorio restringido
+      ansible.windows.win_copy:
+        src: "{{ playbook_dir }}/../files/bootstrap/"
+        dest: "{{ deployment.result.stage }}\\"
+    - name: Guardar parametros propios de este clon sin contrasenas
+      ansible.windows.win_copy:
+        content: "{{ {'vm_name': vm_name, 'vm_ip': vm_ip, 'vm_mask': vm_mask | int, 'vm_gateway': vm_gateway, 'vm_dns1': vm_dns1, 'vm_dns2': vm_dns2, 'linux_user': linux_user, 'rdp_port': rdp_port} | to_nice_json }}"
+        dest: "{{ deployment.result.stage }}\\vm.json"
+    - name: Personalizar Windows offline antes del primer arranque
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Root, [string]$Stage, [Security.SecureString]$Password)
+          & (Join-Path $Stage 'Personalizar-Clon.ps1') -Root $Root -RequestFile (Join-Path $Stage 'vm.json') -AdminPassword $Password
+        error_action: stop
+        parameters:
+          Root: "{{ deployment.result.root }}"
+          Stage: "{{ deployment.result.stage }}"
+        sensitive_parameters:
+          - name: Password
+            value: "{{ admin_password }}"
+      when: vm_os == 'Windows'
+      no_log: true
+    - name: Crear semilla cloud-init propia para Rocky
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Root, [string]$Stage, [string]$Oscdimg, [Security.SecureString]$RootHash, [Security.SecureString]$UserHash)
+          & (Join-Path $Stage 'Personalizar-Clon.ps1') -Root $Root -RequestFile (Join-Path $Stage 'vm.json') -RootHash $RootHash -UserHash $UserHash -OscdimgPath $Oscdimg
+        error_action: stop
+        parameters:
+          Root: "{{ deployment.result.root }}"
+          Stage: "{{ deployment.result.stage }}"
+          Oscdimg: "{{ oscdimg_path }}"
+        sensitive_parameters:
+          - name: RootHash
+            value: "{{ root_password | password_hash('sha512') }}"
+          - name: UserHash
+            value: "{{ linux_password | password_hash('sha512') }}"
+      when: vm_os == 'Rocky'
+      no_log: true
+    - name: Registrar el clon en HA e iniciar desde su disco
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Arrancar-Clon.ps1"
+        error_action: stop
+        parameters:
+          Root: "{{ deployment.result.root }}"
+    - name: Crear archivo de huellas SSH exclusivo de esta tarea
+      ansible.builtin.tempfile:
+        state: file
+        prefix: semaphore-clone-knownhosts-
+      delegate_to: localhost
+      when: vm_os == 'Rocky'
+      register: ssh_hosts_file
+    - name: Registrar invitado con las credenciales especificas del clon
+      ansible.builtin.add_host:
+        name: hv_semaphore_guest
+        groups: hv_semaphore_guests
+        ansible_host: "{{ vm_ip }}"
+        ansible_connection: "{{ 'winrm' if vm_os == 'Windows' else 'ssh' }}"
+        ansible_port: "{{ 5985 if vm_os == 'Windows' else 22 }}"
+        ansible_user: "{{ windows_admin_user if vm_os == 'Windows' else linux_user }}"
+        ansible_password: "{{ admin_password if vm_os == 'Windows' else linux_password }}"
+        ansible_winrm_transport: ntlm
+        ansible_winrm_message_encryption: always
+        ansible_ssh_common_args: "{{ '' if vm_os == 'Windows' else '-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=' + ssh_hosts_file.path }}"
+        expected_instance: "{{ deployment.result.instance_id }}"
+        expected_vm_name: "{{ vm_name }}"
+        expected_vm_ip: "{{ vm_ip }}"
+        expected_system: "{{ vm_os }}"
+      no_log: true
+
+- name: Verificar identidad y primer arranque del clon
+  hosts: hv_semaphore_guests
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Esperar conexion autenticada al sistema ya instalado
+      ansible.builtin.wait_for_connection:
+        timeout: 1800
+        sleep: 10
+    - name: Verificar personalizacion Windows
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Name,[string]$Instance,[string]$IPAddress)
+          $Ansible.Changed=$false
+          $identity=Get-Content 'C:\ProgramData\Semaphore\instance.json' -Raw | ConvertFrom-Json
+          if ($identity.instance_id -ne $Instance -or $env:COMPUTERNAME -ne $Name) { throw 'Identidad Windows no coincide con el clon.' }
+          if (-not (Get-NetIPAddress -AddressFamily IPv4 | Where-Object IPAddress -eq $IPAddress)) { throw 'IP Windows no coincide.' }
+        error_action: stop
+        parameters:
+          Name: "{{ expected_vm_name }}"
+          Instance: "{{ expected_instance }}"
+          IPAddress: "{{ expected_vm_ip }}"
+      register: clone_windows_verified
+      until: clone_windows_verified is succeeded
+      retries: 30
+      delay: 5
+      when: expected_system == 'Windows'
+    - name: Esperar que cloud-init finalice sin errores
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+      when: expected_system == 'Rocky'
+    - name: Leer identidad nueva de Rocky
+      ansible.builtin.command: cat /etc/semaphore-instance.json
+      changed_when: false
+      register: rocky_instance
+      failed_when: rocky_instance.rc != 0 or (rocky_instance.stdout | from_json).instance_id != expected_instance or (rocky_instance.stdout | from_json).vm_name != expected_vm_name
+      when: expected_system == 'Rocky'
+    - name: Retirar respuestas Windows con contrasena temporal
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - 'C:\Windows\Panther\Unattend.xml'
+        - 'C:\Windows\Panther\Unattend\Unattend.xml'
+        - 'C:\Windows\Panther\unattend-original.xml'
+        - 'C:\ProgramData\Semaphore\Customize.ps1'
+      when: expected_system == 'Windows'
+    - name: Confirmar verificacion del clon
+      ansible.builtin.set_fact:
+        guest_verified: true
+
+- name: Retirar semilla temporal tras verificar el clon
+  hosts: "{{ hyperv_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../config/cluster.yml]
+  vars:
+    ansible_winrm_transport: credssp
+  tasks:
+    - name: Exigir verificacion del invitado
+      ansible.builtin.assert:
+        that: ["hostvars['hv_semaphore_guest'].guest_verified | default(false) | bool"]
+    - name: Desmontar semilla y limpiar archivos temporales de esta VM
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Limpiar-Medios.ps1"
+        error_action: stop
+        parameters:
+          VmName: "{{ vm_name }}"
+          Root: "{{ deployment.result.root }}"
+          CsvVolumes: "{{ csv_volumes }}"
+      register: completed
+    - name: Limpiar archivo temporal de huellas del runner
+      ansible.builtin.file:
+        path: "{{ ssh_hosts_file.path }}"
+        state: absent
+      delegate_to: localhost
+      when: vm_os == 'Rocky'
+    - name: Informar despliegue desde imagen base sin instalar el sistema operativo
+      ansible.builtin.debug:
+        msg: "VM {{ vm_name }} creada desde {{ template_id }}; IP {{ vm_ip }}; propietario {{ completed.result.owner }}. No se uso una ISO de instalacion."

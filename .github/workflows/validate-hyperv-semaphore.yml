@@ -24,6 +24,9 @@ jobs:
         run: |
           ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/crear_windows_2025.yml -e @HyperV-Semaphore/examples/windows-extra-vars.json
           ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/crear_rocky_9.yml -e @HyperV-Semaphore/examples/rocky-extra-vars.json
+          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/crear_base_windows_2025.yml -e hyperv_host=SMXHYPVA
+          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/crear_base_rocky_9.yml -e hyperv_host=SMXHYPVB
+          bash -n HyperV-Semaphore/files/sellar-rocky.sh
   powershell-generation:
     runs-on: windows-latest
     steps:

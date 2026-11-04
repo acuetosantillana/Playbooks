@@ -77,7 +77,7 @@
 
     - name: Guardar parametros sin contrasenas
       ansible.windows.win_copy:
-        content: "{{ {'vm_name': vm_name, 'vm_ip': vm_ip, 'vm_mask': vm_mask, 'vm_gateway': vm_gateway, 'vm_dns1': vm_dns1, 'vm_dns2': vm_dns2, 'vm_image_index': vm_image_index | default(0), 'linux_user': linux_user, 'rdp_port': rdp_port, 'windows_ui_language': windows_ui_language, 'windows_admin_user': windows_admin_user} | to_nice_json }}"
+        content: "{{ {'vm_name': vm_name, 'vm_ip': vm_ip, 'vm_mask': vm_mask, 'vm_gateway': vm_gateway, 'vm_dns1': vm_dns1, 'vm_dns2': vm_dns2, 'vm_image_index': vm_image_index | default(0), 'linux_user': linux_user, 'rdp_port': rdp_port, 'windows_ui_language': windows_ui_language, 'windows_admin_user': windows_admin_user, 'solo_base': solo_base | default(false) | bool} | to_nice_json }}"
         dest: "{{ deployment.result.stage }}\\vm.json"
 
     - name: Generar respuestas de Windows sin prompts interactivos

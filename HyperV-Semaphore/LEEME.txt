@@ -1,143 +1,133 @@
-NUEVAS TAREAS SEMAPHORE / HYPER-V
+PLANTILLAS REUTILIZABLES HYPER-V / SEMAPHORE
 
-Todo este directorio es nuevo. Los playbooks Windows/crear_vm_hyperv_Windows.yml,
-Linux/crear_vm_hyperv_Linux.yml y sus templates existentes no se modifican.
-Estos playbooks instalan VM NUEVAS desde ISO usando tus respuestas adaptadas.
-No clonan automaticamente un VHDX sellado; esa es otra operacion.
+El flujo de uso diario copia una imagen ya instalada. No vuelve a ejecutar
+Windows Setup ni Anaconda en cada VM.
 
-TAREAS NUEVAS
-Nombre: NUEVO - Windows Server 2025 - Hyper-V HA
-Playbook: HyperV-Semaphore/playbooks/crear_windows_2025.yml
-Nombre: NUEVO - Rocky Linux 9 - Hyper-V HA
-Playbook: HyperV-Semaphore/playbooks/crear_rocky_9.yml
-Repositorio: https://github.com/acuetosantillana/Playbooks.git
-Rama inicial: codex/hyperv-semaphore-nuevas-tareas
-Proyecto Semaphore: 1. Vista: 5.
+DOS PASOS
+1. BASE - Windows Server 2025 - instalar una vez:
+   playbooks/crear_base_windows_2025.yml
+2. BASE - Rocky Linux 9 - instalar una vez:
+   playbooks/crear_base_rocky_9.yml
+Estas tareas instalan una VM dedicada, verifican el acceso, limpian su identidad,
+la apagan y publican una copia de su VHDX como version maestra.
 
-Se pueden crear en la interfaz de Semaphore, seleccionando el inventario de
-Hyper-V que ya usas, o con scripts/Registrar-TareasSemaphore.ps1. Ese script
-solo registra plantillas; NO ejecuta despliegues ni altera tareas existentes.
-Requiere un token ya disponible mediante SEMAPHORE_API_TOKEN (no subirlo a Git)
-y los ID de tus DOS tareas actuales para heredar inventario y repositorio.
-Ejemplo, sustituyendo 101/102 por los ID reales:
-  .\scripts\Registrar-TareasSemaphore.ps1 -WindowsTemplateOrigen 101 -RockyTemplateOrigen 102 -WhatIf
-Revisar la vista previa y volver a ejecutar sin -WhatIf. No crea tokens.
-Por defecto hereda el grupo de variables de cada tarea origen; se puede elegir
-uno nuevo con -EnvironmentId <id>. Evitar que ese grupo fije vm_name, IP u otros
-valores que deban venir de la encuesta. No se heredan argumentos de ejecucion.
-La API cambia entre versiones de Semaphore: comprobar formularios y encuestas
-tras el alta; si tu version no admite secretos dirigidos a entorno, crear los
-secretos HV_* en un grupo de variables compatible o usar Vault.
+Para crear VM nuevas despues:
+- VM desde plantilla - Windows Server 2025: playbooks/crear_windows_2025.yml
+- VM desde plantilla - Rocky Linux 9: playbooks/crear_rocky_9.yml
+Estas tareas verifican la imagen maestra, hacen copia completa, personalizan el
+invitado y registran su nueva identidad de VM en el cluster. Cada disco es
+independiente. No necesita la ISO del sistema operativo, ni una clave de indice.
 
-INVENTARIO Y RUNNER
-- Reutilizar el inventario de SMXHYPVA/SMXHYPVB y su credencial de dominio.
-- CredSSP debe estar habilitado previamente en los nodos y el runner debe poder
-  usarlo. Add-ClusterVirtualMachineRole lo requiere desde la sesion remota.
-  Este paquete NO habilita CredSSP ni cambia politicas del host.
-- Si se usa HTTPS, confiar en el certificado del WinRM del host. El ejemplo
-  usa 5986 y validacion de certificado; no deshabilita esa comprobacion.
-- El runner Linux necesita Ansible y los paquetes de requirements-runner.txt,
-  ademas de OpenSSH y sshpass para verificar Rocky con usuario/contrasena.
-- collections/requirements.yml en la raiz de ESTA RAMA permite a Semaphore
-  detectar e instalar ansible.windows mediante Galaxy. Se mantiene sincronizado
-  con HyperV-Semaphore/requirements.yml para instalaciones manuales/CI.
-  Los paquetes Python van en el MISMO entorno que ejecuta Ansible; Galaxy no
-  instala pywinrm/credssp/passlib ni sshpass. Verificar el runner antes de ejecutar.
-- El runner debe alcanzar el WinRM de los nodos, el puerto 5985 de la nueva VM
-  Windows y el puerto 22 de Rocky. Si no hay esa ruta, la verificacion falla.
-- Windows invitado usa NTLM con cifrado de mensajes; no habilita Basic ni
-  AllowUnencrypted. No hace falta TrustedHosts para pywinrm/NTLM.
-- Rocky usa huellas SSH aisladas por tarea y aceptacion de clave nueva en el
-  primer acceso. No se cambia la configuracion global SSH del runner.
+OPCIONES CONFIRMADAS DEL ENTORNO
+Hipervisor: SMXHYPVA o SMXHYPVB (Enum).
+VLAN de despliegue: 120 o 96 (Enum).
+Switch actual de tus encuestas: SETvSwitch.
+Catalogo inicial: ws2025-base-v1 y rocky9-base-v1 (Enum segun sistema).
+Biblioteca inicial: C:\ClusterStorage\Volume1\VMTemplates.
+Si Volume1 no existe/no esta Online, ajustar template_library a un CSV real.
+No se crea una carpeta sustituyendo un volumen compartido que no esta disponible.
 
-INSTALACION Y ALMACENAMIENTO
-- Oscdimg debe existir en C:\Oscdimg\oscdimg.exe en el nodo elegido.
-- Ambos nodos deben estar Up y tener LAN-Prod (o el v_switch indicado).
-- Se elige el CSV autorizado con mas espacio, siempre que alcance para disco,
-  ISO completa y reserve_gb (10 GiB por defecto). Esto no reserva capacidad
-  fisica frente a otros despliegues concurrentes; evitar sobreasignacion.
-- VM, VHDX e ISO quedan en CSV\SemaphoreVMs\<vm_name>.
-- La ISO del NAS se copia al CSV con una unidad temporal de la sesion. No se
-  crean mappings globales SMB ni se borran conexiones existentes del host.
-- Las rutas predeterminadas se toman de tus playbooks. Confirmar que el archivo
-  SERVER_EVAL_x64FRE_es-es.iso contiene realmente Windows Server 2025.
-- El disco debe ser de 100 GiB o mas por el particionado original de Rocky.
-- Windows: indice y windows_ui_language deben coincidir con TU ISO. En la ISO
-  espanola el usuario predeterminado es Administrador; ajustar
-  windows_admin_user si tu medio usa otro nombre (Administrator para en-US).
-- Una ISO Windows normal puede pedir pulsar una tecla para arrancar desde DVD.
-  Para despliegue sin intervencion, usar un medio UEFI preparado con la imagen
-  de arranque oficial efisys_noprompt.bin del ADK. Este paquete no modifica ni
-  descarga la ISO del sistema operativo. Con la ISO normal, abrir VMConnect y
-  atender esa pantalla inicial antes de que expire install_timeout.
-- Rocky requiere DVD completo. El OEMDRV debe detectar ks.cfg; si tu version
-  del instalador no lo detecta automaticamente, agregar en el arranque UEFI:
+CREAR LAS BASES UNA SOLA VEZ
+Windows: TPL-WS2025, 4 vCPU, 8 GiB RAM, disco de 100 GiB.
+Rocky: TPL-ROCKY9, 4 vCPU, 4 GiB RAM, disco de 100 GiB.
+IP TEMPORAL para AMBAS instalaciones: 10.138.120.5, VLAN 120, sin DHCP.
+Usarlas SECUENCIALMENTE. Un bloqueo compartido de IP impide ejecutar las dos
+instalaciones al mismo tiempo. Solo se libera al capturar la base apagada.
+Si una tarea falla, conserva el bloqueo: primero revisar/apagar o recuperar la
+base. No borrar el bloqueo mientras una VM pueda seguir usando esa IP.
+El ping previo detecta algunos conflictos, pero no certifica que la IP este libre.
+
+Faltan completar en la encuesta el gateway y DNS correctos de la red. El prefijo
+inicial es 24, tomado de tu encuesta anterior; corregirlo si tu red usa otro.
+Las contrasenas se introducen en los campos secretos de Semaphore; no en Git.
+Windows utiliza el indice 2 como valor inicial de tu encuesta (Standard Desktop
+Experience); se puede elegir otra edicion de la ISO. Confirmar sus indices con
+Get-WindowsImage si se cambia el medio. El medio predeterminado es es-ES y su
+cuenta Administrador; ajustar windows_ui_language/windows_admin_user si cambia.
+
+Las rutas ISO son las de tus playbooks anteriores. Rocky requiere DVD completo.
+Una ISO Windows normal puede pedir pulsar una tecla al iniciar desde DVD. Para
+esa unica instalacion, atender VMConnect o usar un medio UEFI preparado con la
+imagen oficial efisys_noprompt.bin del ADK. Esto ya no ocurre al crear clones.
+Si Rocky no detecta OEMDRV, agregar al arranque del instalador:
   inst.ks=hd:LABEL=OEMDRV:/ks.cfg inst.repo=cdrom
-- El firmware intenta el disco primero y despues el DVD: al estar vacio arranca
-  instalacion; tras instalar arranca desde VHDX y evita repetir el borrado.
 
-ENCUESTA POR EJECUCION
-Obligatorios comunes:
-  hyperv_host   Un solo nodo/alias del inventario: SMXHYPVA o SMXHYPVB.
-  vm_name       Nombre nuevo. Windows maximo 15 caracteres.
-  memory_gb     8 Windows, 4 Rocky como valores iniciales.
-  cpu           4 por defecto de encuesta.
-  disk_gb       100 o mayor.
-  vm_ip         IPv4 unica y disponible.
-  vm_mask       Prefijo numerico, p.ej. 24; acepta mascara decimal en extra-vars.
-  vm_gateway    Gateway de esa red.
-  vm_dns1       DNS principal.
-Opcionales: vm_dns2, vm_vlan (0=untagged), v_switch, iso_path.
-Windows requiere vm_image_index real (consultar Get-WindowsImage con la ISO
-montada). El 0 del JSON de ejemplo es un marcador invalido, no una edicion.
-Rocky usa linux_user=adm salvo que se cambie.
-Los JSON de examples usan IP de documentacion 192.0.2.x: sustituirlas.
+CONTENIDO MINIMO DE LAS BASES
+Windows: sistema operativo, adaptador de Hyper-V, red, WinRM y RDP 4502.
+No se une al dominio ni se instalan agentes con identidad propia en la maestra.
+Se usa Sysprep /generalize /oobe /shutdown /mode:vm por PowerShell Direct.
+No se debe volver a arrancar la VM maestra sellada.
+Rocky: @core, SSH, sudo, cloud-init, LVM/XFS y SELinux enforcing. Sin Docker,
+nginx ni herramientas de desarrollo. cloud-init se habilita al sellar la base.
+Se desactivan los perfiles de red originales, se limpia machine-id, se eliminan
+claves SSH de host y se bloquean las contrasenas de las cuentas maestras.
+Los clones reciben hashes propios y generan sus claves SSH en el primer inicio.
+El usuario operativo usa sudo; root no se habilita para entrar por SSH en el clon.
 
-SECRETOS (encuestas secretas o grupo de variables, sin valores en Git)
-  HV_WINDOWS_PASSWORD -> contrasena del administrador de la VM Windows.
-  HV_ROOT_PASSWORD    -> contrasena root de Rocky.
-  HV_LINUX_PASSWORD   -> contrasena del usuario linux_user.
-  HV_NAS_USER y HV_NAS_PASSWORD -> opcionales; dar ambos o ninguno.
-Si no se dan credenciales NAS se usa la identidad delegada de la sesion.
-Tambien se aceptan admin_password, root_password, linux_password, nas_user y
-nas_pass mediante Ansible Vault/extra-vars protegidas de tu Semaphore.
-Las credenciales de los nodos siguen siendo las del inventario, no estas.
+PUBLICACION
+Cada version se guarda como:
+  <template_library>\<template_id>\base.vhdx
+  <template_library>\<template_id>\metadata.json
+metadata.json se publica al terminar la copia, calcula SHA256 y registra el
+sistema, version, fuente, tamano y fecha. La imagen queda de solo lectura.
+Una version existente nunca se sobrescribe. Para actualizar, anadir otro ID al
+catalogo config/plantillas.yml y a las encuestas, y construir una base nueva.
+No hay discos maestros reales hasta que termine exitosamente su tarea BASE.
+La tarea diaria falla antes de crear una VM si todavia falta esa imagen.
 
-COMPORTAMIENTO Y VERIFICACION
-- Si ya existe una VM, rol de cluster o carpeta de despliegue con ese nombre,
-  la tarea FALLA antes de recrearla. No apaga ni borra VM existentes.
-- No es un actualizador ni reanuda instalaciones incompletas. Para un fallo,
-  revisar VM/carpeta y decidir recuperacion manual; no se hace rollback que
-  pudiera destruir datos. No renombrar o eliminar recursos a ciegas.
-- Secretos se pasan como SecureString, con no_log; el XML necesita contrasena
-  temporal de instalacion. Carpeta y medio de respuestas tienen ACL restringida.
-- El error de la preparacion puede quedar oculto por no_log. Revisar en el nodo
-  accesos al NAS, oscdimg, CSV, duplicados y permisos; no habilitar trazas con
-  contrasenas reales en los logs de Semaphore.
-- Se registra el rol HA y se comprueba Online con timeout que produce fallo.
-- La tarea espera login real al invitado. Windows verifica marcador, nombre e
-  IP. Rocky verifica el marcador escrito al terminar su %post sin errores.
-  Esto es mas que detectar un puerto abierto; no certifica todas las aplicaciones.
-- El KS conserva SELinux permissive y SSH root/contrasena de tu laboratorio.
-  Docker necesita Internet; si falla, el KS no se marca como terminado.
-- Solo despues de verificar se desmontan DVDs y se eliminan los archivos de
-  respuestas y las ISO copiadas de ESA VM. Se guardan VHDX, configuracion y
-  deployment.json. La limpieza busca el nodo propietario actual del rol.
-- Si falla la instalacion o la verificacion, se conservan medios para diagnostico.
-  Contienen credenciales/hashes: revisar el acceso y retirarlos al cerrar el caso.
-- Estas instalaciones conservan IP/nombre. Para crear imagenes maestras
-  clonables hay que generalizar Windows y limpiar identidades de Rocky aparte.
+DESPLEGAR DESDE LA PLANTILLA
+Seleccionar hipervisor, plantilla y VLAN en listas. Indicar nombre, CPU, RAM,
+disco, IP, prefijo, gateway, DNS y credenciales de la nueva VM.
+10.138.120.5 queda reservada exclusivamente a la instalacion de las bases.
+La tarea no permite usar esa direccion como IP de un clon.
+Windows recibe Unattend de specialize/OOBE dentro del VHDX copiado, con nombre,
+red y contrasena nuevos. No necesita ISO de instalacion ni de respuesta.
+Rocky recibe un medio CIDATA pequeno con metadatos, red por MAC y cloud-config.
+Ese medio personaliza el sistema instalado; no instala Rocky otra vez.
+Oscdimg sigue siendo necesario en el host para generar el CIDATA de Rocky.
+Una MAC nueva fija y un instance-id unico evitan reutilizar la identidad maestra.
+Se verifica login real y el marcador de esa instancia antes de retirar los medios
+y archivos temporales. La copia del VHDX se verifica contra SHA256 de la maestra.
+Si se amplia el disco virtual, la ampliacion de particiones/LVM del invitado
+puede requerir un paso adicional; no se afirma que todo ese espacio este ya en / o C:.
 
-VALIDACION DEL CODIGO
-  pwsh -File HyperV-Semaphore/tests/Verificar-Generacion.ps1
-  python HyperV-Semaphore/tests/validar_archivos.py
-El segundo comando requiere PyYAML, Jinja2 y pykickstart.
-La accion validate-hyperv-semaphore.yml tambien ejecuta syntax-check de Ansible
-en Linux. No conecta al cluster ni despliega VM. La sintaxis no reemplaza una
-prueba real con tus ISO, permisos, red y version de Semaphore.
+REQUISITOS DEL RUNNER Y HOSTS
+- Inventario Hipervisores Windows, cuenta con permisos Hyper-V/Failover Cluster,
+  montaje de VHDX y administracion del host. CredSSP ya habilitado previamente.
+  No se cambian politicas de WinRM/CredSSP ni certificados automaticamente.
+- Ansible y Python del MISMO entorno del runner, requisitos de
+  requirements-runner.txt, OpenSSH y sshpass para el acceso inicial a Rocky.
+- collections/requirements.yml en la raiz de la rama permite instalar
+  ansible.windows desde Galaxy. Galaxy no instala paquetes Python ni sshpass.
+- El runner debe alcanzar WinRM de los nodos y del invitado Windows (5985), o
+  SSH de Rocky (22). NTLM lleva cifrado de mensajes; Basic no se habilita.
+- Ambos nodos Up, switch presente en ambos, CSV disponibles y espacio suficiente.
+- La instalacion inicial copia la ISO del NAS al CSV; usa credenciales NAS
+  opcionales por sesion, sin mappings SMB globales persistentes.
+- Los secretos de encuesta pueden ser admin_password, root_password,
+  linux_password y nas_pass. Tambien se admiten secretos de entorno HV_*.
+- Copias completas en CSV; se necesita espacio para el disco solicitado y reserva.
+
+ERRORES Y PROTECCIONES
+No se apagan, sobrescriben ni actualizan VM existentes. Un nombre repetido falla.
+No se hace rollback que borre discos ante errores. Se conservan recursos para
+revisar y recuperar; los medios pueden contener contrasenas/hashes.
+La captura solo admite una base dedicada TPL- recien creada por este proceso,
+con un solo VHDX independiente y sin checkpoints, apagada tras el sellado.
+La personalizacion ocurre antes del primer arranque del clon. Una vista previa
+RenderOnly no deja el marcador que habilita arrancar la VM.
+Las rutas de limpieza se comprueban bajo el CSV y el manifiesto de esa VM.
+
+VALIDACIONES
+PowerShell: tests/Verificar-Generacion.ps1 prueba generacion con datos ficticios,
+base minima, XML de clone sin windowsPE y semilla cloud-init de identidad unica.
+Python: tests/validar_archivos.py verifica YAML, Jinja, referencias y ambos KS.
+GitHub Actions comprueba los cuatro playbooks con Ansible --syntax-check y el
+sellador Bash. No equivale a haber instalado, sellado y arrancado VM reales.
+Los playbooks originales Windows/ y Linux/ y las tareas 11 y 13 se conservan.
 
 REFERENCIAS
-https://semaphoreui.com/docs/user-guide/task-templates
+https://learn.microsoft.com/windows-hardware/manufacture/desktop/sysprep-process-overview
+https://learn.microsoft.com/windows-hardware/manufacture/desktop/windows-setup-automation-overview
+https://cloudinit.readthedocs.io/en/latest/reference/datasources/nocloud.html
 https://semaphoreui.com/docs/user-guide/task-templates/survey-vars
-https://docs.ansible.com/projects/ansible/latest/collections/ansible/windows/win_powershell_module.html
-https://learn.microsoft.com/en-us/powershell/module/failoverclusters/add-clustervirtualmachinerole

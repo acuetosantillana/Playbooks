@@ -1,0 +1,14 @@
+---
+# Se instala y captura cada base UNA sola vez. Cada version es inmutable.
+template_library: 'C:\ClusterStorage\Volume1\VMTemplates'
+allowed_vlans: [120, 96]
+clone_switch: SETvSwitch
+base_install_ip: 10.138.120.5
+base_install_vlan: 120
+template_catalog:
+  ws2025-base-v1:
+    system: Windows
+    description: Windows Server 2025 - base minima
+  rocky9-base-v1:
+    system: Rocky
+    description: Rocky Linux 9 - base minima con cloud-init

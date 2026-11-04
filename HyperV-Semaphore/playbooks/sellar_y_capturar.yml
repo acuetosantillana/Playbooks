@@ -1,0 +1,92 @@
+---
+- name: Sellar Windows mediante PowerShell Direct
+  hosts: "{{ hyperv_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../config/cluster.yml, ../config/plantillas.yml]
+  vars:
+    ansible_winrm_transport: credssp
+  tasks:
+    - name: Exigir verificacion previa de la base recien instalada
+      ansible.builtin.assert:
+        that:
+          - hostvars['hv_semaphore_guest'].guest_verified | default(false) | bool
+          - deployment.result.root is defined
+    - name: Obtener propietario actual de la base
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Name)
+          $Ansible.Changed=$false
+          $Ansible.Result=@{owner=(Get-ClusterGroup -Name $Name).OwnerNode.Name}
+        parameters:
+          Name: "{{ vm_name }}"
+        error_action: stop
+      register: base_owner
+    - name: Generalizar Windows y solicitar apagado
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Sellar-Windows.ps1"
+        error_action: stop
+        parameters:
+          VmName: "{{ vm_name }}"
+        sensitive_parameters:
+          - name: GuestCredential
+            username: "{{ windows_admin_user }}"
+            password: "{{ admin_password }}"
+      delegate_to: "{{ base_owner.result.owner }}"
+      when: vm_os == 'Windows'
+      no_log: true
+
+- name: Sellar Rocky y preparar cloud-init para los futuros clones
+  hosts: hv_semaphore_guests
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Preparar y apagar la base Rocky
+      when: expected_system == 'Rocky'
+      become: true
+      vars:
+        ansible_become_password: "{{ ansible_password }}"
+      block:
+        - name: Copiar herramienta de sellado dentro de la base
+          ansible.builtin.copy:
+            src: ../files/sellar-rocky.sh
+            dest: /var/tmp/sellar-rocky-semaphore.sh
+            mode: '0700'
+        - name: Limpiar identidad, bloquear credenciales maestras y programar apagado
+          ansible.builtin.command:
+            argv: [/bin/bash, /var/tmp/sellar-rocky-semaphore.sh, "{{ expected_vm_name }}"]
+
+- name: Publicar disco maestro y liberar la IP de instalacion
+  hosts: "{{ hyperv_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../config/cluster.yml, ../config/plantillas.yml]
+  vars:
+    ansible_winrm_transport: credssp
+  tasks:
+    - name: Esperar apagado y capturar una version nueva de la imagen
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Capturar-Plantilla.ps1"
+        error_action: stop
+        parameters:
+          VmName: "{{ vm_name }}"
+          TemplateId: "{{ template_id }}"
+          Sistema: "{{ vm_os }}"
+          Library: "{{ template_library }}"
+          SourceRoot: "{{ deployment.result.root }}"
+          CsvVolumes: "{{ csv_volumes }}"
+      register: captured_template
+    - name: Liberar la IP solo tras publicar la base apagada
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Bloquear-IPBase.ps1"
+        error_action: stop
+        parameters:
+          Action: Liberar
+          Library: "{{ template_library }}"
+          VmName: "{{ vm_name }}"
+          IPAddress: "{{ vm_ip }}"
+          CsvVolumes: "{{ csv_volumes }}"
+          Token: "{{ base_ip_lock.result.token }}"
+    - name: Informar que la plantilla esta disponible para reutilizar
+      ansible.builtin.debug:
+        msg: "Plantilla {{ template_id }} publicada en {{ captured_template.result.image }}. La VM base queda apagada; los siguientes despliegues copian este VHDX."

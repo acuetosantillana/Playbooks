@@ -1,0 +1,40 @@
+---
+- name: Reservar la IP temporal antes de crear una base
+  hosts: "{{ hyperv_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../config/cluster.yml, ../config/plantillas.yml]
+  vars:
+    ansible_winrm_transport: credssp
+  tasks:
+    - name: Validar base dedicada y catalogo
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length == 1
+          - vm_name is match('^TPL-[a-zA-Z0-9-]+$')
+          - template_id in template_catalog
+          - template_catalog[template_id].system == vm_os
+          - vm_vlan | int == base_install_vlan | int
+          - vm_ip == base_install_ip
+          - vm_gateway | default('') | length > 0
+          - vm_dns1 | default('') | length > 0
+        fail_msg: La base requiere nombre TPL-, version del catalogo y red de instalacion completa.
+    - name: Comprobar que esta version aun no esta publicada
+      ansible.windows.win_stat:
+        path: "{{ template_library }}\\{{ template_id }}\\metadata.json"
+      register: existing_base
+    - name: Evitar reinstalar una base que ya esta publicada
+      ansible.builtin.assert:
+        that: ["not existing_base.stat.exists"]
+        fail_msg: Esta base ya existe. Usa la tarea VM desde plantilla; no hace falta instalar otra vez.
+    - name: Bloquear la IP compartida entre las dos tareas BASE
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Bloquear-IPBase.ps1"
+        error_action: stop
+        parameters:
+          Action: Reservar
+          Library: "{{ template_library }}"
+          VmName: "{{ vm_name }}"
+          IPAddress: "{{ vm_ip }}"
+          CsvVolumes: "{{ csv_volumes }}"
+      register: base_ip_lock
