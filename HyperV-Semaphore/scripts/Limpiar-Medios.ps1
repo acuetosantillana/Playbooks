@@ -24,7 +24,7 @@ foreach ($dvd in @(Get-VMDvdDrive -ComputerName $ownerNode -VMName $VmName)) {
 }
 if (Get-VMDvdDrive -ComputerName $ownerNode -VMName $VmName | Where-Object Path) { throw 'Quedan medios montados. Se conserva el material de instalacion.' }
 # Solo estas rutas del despliegue; nunca se borran discos ni configuracion de VM.
-foreach ($relative in @('Provisioning','Media\answers.iso','Media\os.iso')) {
+foreach ($relative in @('Provisioning','Media\answers.iso','Media\os.iso','Media\os-uefi-auto.iso')) {
     $targetPath = [IO.Path]::GetFullPath((Join-Path $resolvedRoot $relative))
     if (-not $targetPath.StartsWith($resolvedRoot + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Ruta de limpieza fuera del despliegue.' }
     if (Test-Path -LiteralPath $targetPath) {

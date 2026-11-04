@@ -46,9 +46,17 @@ Get-WindowsImage si se cambia el medio. El medio predeterminado es es-ES y su
 cuenta Administrador; ajustar windows_ui_language/windows_admin_user si cambia.
 
 Las rutas ISO son las de tus playbooks anteriores. Rocky requiere DVD completo.
-Una ISO Windows normal puede pedir pulsar una tecla al iniciar desde DVD. Para
-esa unica instalacion, atender VMConnect o usar un medio UEFI preparado con la
-imagen oficial efisys_noprompt.bin del ADK. Esto ya no ocurre al crear clones.
+La tarea BASE Windows prepara automaticamente una copia UEFI de la ISO con
+efisys_noprompt.bin, para arrancar sin pulsar ninguna tecla. Busca el archivo
+oficial en la ISO, junto a C:\Oscdimg\oscdimg.exe y en Deployment Tools del ADK.
+Si no esta disponible, copiarlo desde el ADK de Microsoft a C:\Oscdimg o definir
+efisys_noprompt_path. Tambien admite efisys_noprompt_EX.bin por ruta explicita.
+Si falta, la tarea falla antes de crear/iniciar la VM; no deja una instalacion
+esperando teclado. La ISO del NAS y su copia original no se sobrescriben.
+Secure Boot sigue habilitado. Se estima espacio para tres copias de la ISO
+durante la reconstruccion; el arbol extraido se retira al terminar. Se conserva
+un registro con el archivo de arranque usado y su SHA256. windows_automatic_boot
+esta habilitado por defecto; ponerlo en false vuelve al medio original.
 Si Rocky no detecta OEMDRV, agregar al arranque del instalador:
   inst.ks=hd:LABEL=OEMDRV:/ks.cfg inst.repo=cdrom
 
@@ -124,6 +132,8 @@ base minima, XML de clone sin windowsPE y semilla cloud-init de identidad unica.
 Python: tests/validar_archivos.py verifica YAML, Jinja, referencias y ambos KS.
 GitHub Actions comprueba los cuatro playbooks con Ansible --syntax-check y el
 sellador Bash. No equivale a haber instalado, sellado y arrancado VM reales.
+tests/Verificar-ISOAutomatico.ps1 comprueba argumentos UEFI, rutas con espacios,
+preservacion de la fuente, montajes y errores usando dobles de prueba.
 Los playbooks originales Windows/ y Linux/ y las tareas 11 y 13 se conservan.
 
 REFERENCIAS

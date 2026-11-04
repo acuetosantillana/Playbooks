@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory)][long]$MemoryBytes,
     [Parameter(Mandatory)][long]$DiskBytes,
     [Parameter(Mandatory)][int]$CpuCount,
+    [string]$OsIsoPath='',
     [ValidateRange(0,4094)][int]$VlanId=0
 )
 $ErrorActionPreference = 'Stop'
@@ -18,6 +19,11 @@ if (Get-ClusterGroup -Name $VmName -ErrorAction SilentlyContinue) { throw 'El ro
 $stage = Join-Path $Root 'Provisioning'
 $answers = Join-Path $stage 'answers'
 $osIso = Join-Path $Root 'Media\os.iso'
+if ($OsIsoPath) {
+    $allowedIsoPaths=@($osIso,(Join-Path $Root 'Media\os-uefi-auto.iso'))
+    if ([IO.Path]::GetFullPath($OsIsoPath) -notin $allowedIsoPaths) { throw 'ISO fuera del directorio de medios de esta VM.' }
+    $osIso=[IO.Path]::GetFullPath($OsIsoPath)
+}
 $answersIso = Join-Path $Root 'Media\answers.iso'
 $label = 'OEMDRV'
 $file = 'ks.cfg'

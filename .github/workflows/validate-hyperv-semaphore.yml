@@ -34,3 +34,6 @@ jobs:
       - name: Verificar generacion desatendida con datos ficticios
         shell: pwsh
         run: ./HyperV-Semaphore/tests/Verificar-Generacion.ps1
+      - name: Verificar preparacion de ISO UEFI sin teclado con simulaciones
+        shell: pwsh
+        run: ./HyperV-Semaphore/tests/Verificar-ISOAutomatico.ps1

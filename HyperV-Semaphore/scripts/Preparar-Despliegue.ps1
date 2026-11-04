@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory)][long]$DiskBytes,
     [Parameter(Mandatory)][string]$OscdimgPath,
     [long]$ReserveBytes = 10737418240,
+    [ValidateRange(1,3)][int]$IsoCopies = 1,
     [PSCredential]$NasCredential
 )
 $ErrorActionPreference = 'Stop'
@@ -48,7 +49,7 @@ try {
             }
         }
     }
-    $required = $DiskBytes + $iso.Length + $ReserveBytes
+    $required = $DiskBytes + ($iso.Length * $IsoCopies) + $ReserveBytes
     $best = $candidates | Where-Object Free -ge $required | Sort-Object Free -Descending | Select-Object -First 1
     if (-not $best) { throw 'Ningun CSV autorizado tiene espacio suficiente para disco, ISO y reserva.' }
     $root = Join-Path (Join-Path $best.Path 'SemaphoreVMs') $VmName
