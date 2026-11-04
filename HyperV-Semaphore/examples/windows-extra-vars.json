@@ -1,0 +1,14 @@
+{
+  "hyperv_host": "SMXHYPVA",
+  "vm_name": "LAB-WS25-01",
+  "memory_gb": 8,
+  "cpu": 4,
+  "disk_gb": 100,
+  "vm_ip": "192.0.2.20",
+  "vm_mask": 24,
+  "vm_gateway": "192.0.2.1",
+  "vm_dns1": "192.0.2.10",
+  "vm_dns2": "",
+  "vm_vlan": 0,
+  "vm_image_index": 0
+}

@@ -1,0 +1,249 @@
+
+#version=RHEL9
+
+# ==================================================
+# Configuracion de instalacion
+# ==================================================
+
+cdrom
+
+lang en_US.UTF-8
+
+keyboard --vckeymap=latam --xlayouts='latam'
+
+# ==================================================
+# Manejo de Mascara de Red (generador PowerShell)
+# Los hashes de contrasena usan variables *_password_hash
+# ==================================================
+
+# La mascara se normaliza en Generar-Respuestas.ps1.
+
+# ==================================================
+# Configuracion de Red
+# ==================================================
+
+network --bootproto=static --ip={{ vm_ip }} --netmask={{ vm_netmask }} --gateway={{ vm_gateway }} --nameserver={{ vm_dns1 }}{{ vm_dns_suffix }} --device=link --activate --onboot=yes --hostname={{ vm_name }}
+
+# ==================================================
+# Configuracion Regional y Seguridad
+# ==================================================
+
+timezone America/Mexico_City --utc
+
+rootpw --iscrypted {{ root_password_hash }}
+
+selinux --permissive
+
+firewall --enabled --service=ssh
+
+services --enabled=sshd
+
+# ==================================================
+# Particionado de Disco (sda)
+# Hyper-V Generacion 2 - UEFI / GPT
+# ==================================================
+
+# Solo utilizar el disco sda.
+# ADVERTENCIA: se eliminan sus particiones existentes.
+
+ignoredisk --only-use=sda
+
+clearpart --all --initlabel --drives=sda --disklabel=gpt
+
+zerombr
+
+# Bootloader UEFI
+bootloader --boot-drive=sda
+
+# EFI - 512 MiB
+part /boot/efi --fstype=efi --size=512 --ondisk=sda
+
+# BOOT - 1 GiB
+part /boot --fstype=xfs --size=1024 --ondisk=sda
+
+# Volumen fisico LVM - resto del disco
+part pv.01 --fstype=lvmpv --grow --size=1 --ondisk=sda
+
+# Grupo de volumenes
+volgroup vg_system pv.01
+
+# ROOT - 50 GiB
+logvol / --vgname=vg_system --name=lv_root --size=51200 --fstype=xfs
+
+# HOME - 20 GiB
+logvol /home --vgname=vg_system --name=lv_home --size=20480 --fstype=xfs
+
+# SWAP - 4 GiB
+logvol swap --vgname=vg_system --name=lv_swap --size=4096 --fstype=swap
+
+# El espacio restante queda libre dentro de vg_system.
+
+# ==================================================
+# Usuario
+# ==================================================
+
+reboot
+
+user --name={{ linux_user }} --password={{ linux_password_hash }} --iscrypted --groups=wheel
+
+# ==================================================
+# Paquetes
+# ==================================================
+
+%packages
+@core
+@development
+
+vim
+curl
+wget
+net-tools
+nginx
+bash-completion
+nfs-utils
+git
+dnf-utils
+dnf-plugins-core
+lvm2
+xfsprogs
+openssh-server
+sudo
+
+# Evitar conflictos con Docker Engine
+-podman
+-buildah
+
+%end
+
+# ==================================================
+# Post-instalacion
+# ==================================================
+
+%post --erroronfail --interpreter=/bin/bash --log=/root/ks-post.log
+
+echo "=== Inicio Post-Configuracion: $(date) ==="
+
+# --------------------------------------------------
+# SSH
+# --------------------------------------------------
+
+# Mantener el comportamiento original de acceso SSH.
+
+sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+sed -i 's/^PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+# Validar sintaxis SSH
+if sshd -t; then
+    echo "SSH: configuracion valida"
+else
+    echo "ERROR: configuracion SSH invalida"
+fi
+
+systemctl enable sshd
+
+# --------------------------------------------------
+# Docker
+# --------------------------------------------------
+
+echo "=== Instalando Docker ==="
+
+DOCKER_OK=1
+
+# Instalar dependencias
+if ! dnf -y install dnf-plugins-core >> /root/ks-post.log 2>&1; then
+    echo "ERROR: No se pudo instalar dnf-plugins-core"
+    DOCKER_OK=0
+fi
+
+# Agregar repositorio Docker
+if ! dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo >> /root/ks-post.log 2>&1; then
+    echo "ERROR: No se pudo agregar repositorio Docker"
+    DOCKER_OK=0
+fi
+
+# Instalar Docker Engine
+if [ "$DOCKER_OK" -eq 1 ]; then
+
+    if dnf install -y \
+        docker-ce \
+        docker-ce-cli \
+        containerd.io \
+        docker-buildx-plugin \
+        docker-compose-plugin \
+        --nobest >> /root/ks-post.log 2>&1; then
+
+        echo "Docker instalado correctamente"
+
+    else
+        echo "ERROR: Fallo la instalacion de Docker"
+        DOCKER_OK=0
+    fi
+
+fi
+
+# Habilitar servicio Docker
+if [ "$DOCKER_OK" -eq 1 ]; then
+
+    if systemctl enable docker.service >> /root/ks-post.log 2>&1; then
+        echo "Docker habilitado para el arranque"
+    else
+        echo "ERROR: No se pudo habilitar Docker"
+        DOCKER_OK=0
+    fi
+
+fi
+
+# --------------------------------------------------
+# Permisos de usuario
+# --------------------------------------------------
+
+if id "{{ linux_user }}" >/dev/null 2>&1; then
+
+    usermod -aG wheel "{{ linux_user }}"
+
+    if getent group docker >/dev/null 2>&1; then
+        usermod -aG docker "{{ linux_user }}"
+        echo "Usuario {{ linux_user }} agregado a docker"
+    else
+        echo "AVISO: grupo docker no disponible"
+    fi
+
+else
+    echo "ERROR: Usuario {{ linux_user }} no existe"
+fi
+
+# --------------------------------------------------
+# Validaciones finales
+# --------------------------------------------------
+
+echo "=== Validacion del sistema ==="
+
+echo "Hostname: $(hostname)"
+
+echo "Discos:"
+lsblk
+
+echo "Volumenes LVM:"
+vgs
+lvs
+
+echo "Servicios habilitados:"
+systemctl is-enabled sshd || true
+systemctl is-enabled docker || true
+
+echo "=== Estado Docker ==="
+
+if [ "$DOCKER_OK" -eq 1 ]; then
+    echo "DOCKER_STATUS=INSTALLED"
+else
+    echo "DOCKER_STATUS=FAILED"
+fi
+
+if [ "$DOCKER_OK" -ne 1 ]; then exit 1; fi
+printf '%s\n' '{{ vm_name }}' > /etc/semaphore-provisioning-complete
+echo "=== Fin Post-Configuracion: $(date) ==="
+
+%end

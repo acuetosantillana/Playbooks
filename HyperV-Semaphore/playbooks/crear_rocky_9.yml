@@ -1,0 +1,5 @@
+---
+- name: Desplegar Rocky Linux 9 en Hyper-V
+  ansible.builtin.import_playbook: desplegar.yml
+  vars:
+    vm_os: Rocky

@@ -1,0 +1,232 @@
+---
+- name: Crear una VM nueva y su rol de alta disponibilidad
+  hosts: "{{ hyperv_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../config/cluster.yml]
+  vars:
+    ansible_winrm_transport: credssp
+  pre_tasks:
+    - name: Exigir un solo nodo ejecutor y los parametros de la VM
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length == 1
+          - vm_os in ['Windows', 'Rocky']
+          - vm_name is defined
+          - vm_name is match('^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$')
+          - memory_gb | default(0) | int >= 4
+          - cpu | default(0) | int >= 1
+          - cpu | int <= 64
+          - disk_gb | default(0) | int >= 100
+          - vm_vlan | int >= 0
+          - vm_vlan | int <= 4094
+          - vm_ip is defined
+          - vm_mask is defined
+          - vm_gateway is defined
+          - vm_dns1 is defined
+        fail_msg: Selecciona un unico nodo y completa nombre, recursos y parametros IPv4.
+
+    - name: Validar datos exclusivos de Windows
+      ansible.builtin.assert:
+        that:
+          - vm_name | length <= 15
+          - vm_image_index | default(0) | int >= 1
+          - admin_password | length > 0
+        fail_msg: Windows requiere nombre de hasta 15 caracteres, indice real de ISO y contrasena.
+      when: vm_os == 'Windows'
+      no_log: true
+
+    - name: Validar secretos de Rocky
+      ansible.builtin.assert:
+        that:
+          - root_password | length > 0
+          - linux_password | length > 0
+        fail_msg: Rocky requiere las contrasenas de root y del usuario administrador.
+      when: vm_os == 'Rocky'
+      no_log: true
+
+    - name: Validar credenciales opcionales de NAS
+      ansible.builtin.assert:
+        that:
+          - (nas_user | length > 0) == (nas_pass | length > 0)
+        fail_msg: Proporciona usuario y contrasena NAS juntos, o ninguno para usar la cuenta delegada.
+      no_log: true
+
+  tasks:
+    - name: Validar cluster y copiar ISO de instalacion al CSV
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Preparar-Despliegue.ps1"
+        error_action: stop
+        parameters:
+          VmName: "{{ vm_name }}"
+          ClusterNodes: "{{ cluster_nodes }}"
+          CsvVolumes: "{{ csv_volumes }}"
+          SwitchName: "{{ v_switch | default(default_switch, true) }}"
+          IsoPath: "{{ iso_path | default(windows_iso_default if vm_os == 'Windows' else rocky_iso_default, true) }}"
+          DiskBytes: "{{ (disk_gb | int) * 1073741824 }}"
+          ReserveBytes: "{{ (reserve_gb | int) * 1073741824 }}"
+          OscdimgPath: "{{ oscdimg_path }}"
+        sensitive_parameters: "{{ [{'name': 'NasCredential', 'username': nas_user, 'password': nas_pass}] if nas_user | length > 0 else [] }}"
+      register: deployment
+      no_log: true
+
+    - name: Copiar generador y plantillas al directorio restringido
+      ansible.windows.win_copy:
+        src: "{{ playbook_dir }}/../files/bootstrap/"
+        dest: "{{ deployment.result.stage }}\\"
+
+    - name: Guardar parametros sin contrasenas
+      ansible.windows.win_copy:
+        content: "{{ {'vm_name': vm_name, 'vm_ip': vm_ip, 'vm_mask': vm_mask, 'vm_gateway': vm_gateway, 'vm_dns1': vm_dns1, 'vm_dns2': vm_dns2, 'vm_image_index': vm_image_index | default(0), 'linux_user': linux_user, 'rdp_port': rdp_port, 'windows_ui_language': windows_ui_language, 'windows_admin_user': windows_admin_user} | to_nice_json }}"
+        dest: "{{ deployment.result.stage }}\\vm.json"
+
+    - name: Generar respuestas de Windows sin prompts interactivos
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Stage, [Security.SecureString]$AdminPassword)
+          & (Join-Path $Stage 'Generar-Respuestas.ps1') -Sistema Windows -Configuracion (Join-Path $Stage 'vm.json') -Salida (Join-Path $Stage 'answers') -AdminPassword $AdminPassword
+        error_action: stop
+        parameters:
+          Stage: "{{ deployment.result.stage }}"
+        sensitive_parameters:
+          - name: AdminPassword
+            value: "{{ admin_password }}"
+      when: vm_os == 'Windows'
+      no_log: true
+
+    - name: Generar Kickstart con hashes SHA512 sin prompts interactivos
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$Stage, [Security.SecureString]$RootHash, [Security.SecureString]$UserHash)
+          & (Join-Path $Stage 'Generar-Respuestas.ps1') -Sistema Rocky -Configuracion (Join-Path $Stage 'vm.json') -Salida (Join-Path $Stage 'answers') -RootPasswordHash $RootHash -LinuxPasswordHash $UserHash
+        error_action: stop
+        parameters:
+          Stage: "{{ deployment.result.stage }}"
+        sensitive_parameters:
+          - name: RootHash
+            value: "{{ root_password | password_hash('sha512') }}"
+          - name: UserHash
+            value: "{{ linux_password | password_hash('sha512') }}"
+      when: vm_os == 'Rocky'
+      no_log: true
+
+    - name: Crear medios, VM y rol HA; iniciar instalacion
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Crear-VMCluster.ps1"
+        error_action: stop
+        parameters:
+          VmName: "{{ vm_name }}"
+          Sistema: "{{ vm_os }}"
+          Root: "{{ deployment.result.root }}"
+          SwitchName: "{{ v_switch | default(default_switch, true) }}"
+          OscdimgPath: "{{ oscdimg_path }}"
+          MemoryBytes: "{{ (memory_gb | int) * 1073741824 }}"
+          DiskBytes: "{{ (disk_gb | int) * 1073741824 }}"
+          CpuCount: "{{ cpu | int }}"
+          VlanId: "{{ vm_vlan | int }}"
+      register: created_vm
+
+    - name: Crear archivo temporal de huellas SSH exclusivo de esta tarea
+      ansible.builtin.tempfile:
+        state: file
+        prefix: semaphore-hyperv-knownhosts-
+      delegate_to: localhost
+      when: vm_os == 'Rocky'
+      register: ssh_hosts_file
+
+    - name: Registrar invitado para verificar instalacion mediante autenticacion
+      ansible.builtin.add_host:
+        name: hv_semaphore_guest
+        groups: hv_semaphore_guests
+        ansible_host: "{{ vm_ip }}"
+        ansible_connection: "{{ 'winrm' if vm_os == 'Windows' else 'ssh' }}"
+        ansible_port: "{{ 5985 if vm_os == 'Windows' else 22 }}"
+        ansible_user: "{{ windows_admin_user if vm_os == 'Windows' else linux_user }}"
+        ansible_password: "{{ admin_password if vm_os == 'Windows' else linux_password }}"
+        ansible_winrm_transport: ntlm
+        ansible_winrm_message_encryption: always
+        ansible_ssh_common_args: "{{ '' if vm_os == 'Windows' else '-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=' + ssh_hosts_file.path }}"
+        expected_vm_name: "{{ vm_name }}"
+        expected_vm_ip: "{{ vm_ip }}"
+        expected_system: "{{ vm_os }}"
+        guest_install_timeout: "{{ install_timeout }}"
+      no_log: true
+
+- name: Esperar y verificar el sistema instalado
+  hosts: hv_semaphore_guests
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: Esperar conexion autenticada desde el runner de Semaphore
+      ansible.builtin.wait_for_connection:
+        timeout: "{{ guest_install_timeout | int }}"
+        sleep: 15
+        connect_timeout: 10
+
+    - name: Verificar marcador, nombre y direccion de Windows
+      ansible.windows.win_powershell:
+        script: |
+          param([string]$ExpectedName, [string]$ExpectedIP)
+          $Ansible.Changed = $false
+          if (-not (Test-Path 'C:\plantilla-lista.txt')) { throw 'No termino la configuracion de Windows.' }
+          if ($env:COMPUTERNAME -ne $ExpectedName) { throw 'El nombre Windows no coincide con el solicitado.' }
+          if (-not (Get-NetIPAddress -AddressFamily IPv4 | Where-Object IPAddress -eq $ExpectedIP)) { throw 'La IP Windows no coincide.' }
+        parameters:
+          ExpectedName: "{{ expected_vm_name }}"
+          ExpectedIP: "{{ expected_vm_ip }}"
+        error_action: stop
+      when: expected_system == 'Windows'
+      register: windows_verified
+      until: windows_verified is succeeded
+      retries: 20
+      delay: 5
+
+    - name: Verificar marcador de instalacion completa de Rocky
+      ansible.builtin.command: cat /etc/semaphore-provisioning-complete
+      register: rocky_marker
+      changed_when: false
+      failed_when: rocky_marker.rc != 0 or rocky_marker.stdout | trim != expected_vm_name
+      when: expected_system == 'Rocky'
+
+    - name: Confirmar que el invitado paso las verificaciones
+      ansible.builtin.set_fact:
+        guest_verified: true
+
+- name: Desmontar medios y finalizar despliegue
+  hosts: "{{ hyperv_host }}"
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../config/cluster.yml]
+  vars:
+    ansible_winrm_transport: credssp
+  tasks:
+    - name: Exigir verificacion antes de limpiar material de instalacion
+      ansible.builtin.assert:
+        that:
+          - hostvars['hv_semaphore_guest'].guest_verified | default(false) | bool
+
+    - name: Desmontar DVDs y borrar solo medios de este despliegue
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Limpiar-Medios.ps1"
+        error_action: stop
+        parameters:
+          VmName: "{{ vm_name }}"
+          Root: "{{ deployment.result.root }}"
+          CsvVolumes: "{{ csv_volumes }}"
+      register: completed
+
+    - name: Retirar archivo temporal de huellas SSH del runner
+      ansible.builtin.file:
+        path: "{{ ssh_hosts_file.path }}"
+        state: absent
+      delegate_to: localhost
+      when: vm_os == 'Rocky'
+
+    - name: Informar resultado verificado
+      ansible.builtin.debug:
+        msg:
+          - "VM nueva: {{ vm_name }} ({{ vm_os }})"
+          - "Nodo propietario: {{ completed.result.owner }}"
+          - "CSV: {{ deployment.result.csv }}"
+          - "IP: {{ vm_ip }}"
+          - Instalacion autenticada y verificada; medios temporales retirados.
