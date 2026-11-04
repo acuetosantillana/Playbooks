@@ -1,0 +1,31 @@
+---
+- name: Retirar solo la base Windows de prueba expresamente autorizada
+  hosts: "{{ hyperv_host | default('SMXHYPVA') }}"
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../config/cluster.yml, ../config/plantillas.yml]
+  vars:
+    ansible_winrm_transport: credssp
+  tasks:
+    - name: Validar un solo ejecutor e identidad exacta del intento
+      ansible.builtin.assert:
+        that:
+          - ansible_play_hosts_all | length == 1
+          - expected_vm_id | default('') | length > 0
+          - expected_lock_created | default('') | length > 0
+          - cleanup_root | default('') | length > 0
+    - name: Validar o eliminar exclusivamente TPL-WS2025 y sus archivos
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Eliminar-BasePrueba.ps1"
+        error_action: stop
+        parameters:
+          Root: "{{ cleanup_root }}"
+          CsvVolumes: "{{ csv_volumes }}"
+          Library: "{{ template_library }}"
+          ExpectedVMId: "{{ expected_vm_id }}"
+          ExpectedLockCreated: "{{ expected_lock_created }}"
+          Apply: "{{ cleanup_apply | default(false) | bool }}"
+      register: cleanup_result
+    - name: Mostrar resultado sin secretos
+      ansible.builtin.debug:
+        var: cleanup_result.result
