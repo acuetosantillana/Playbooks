@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Instalar validadores del controlador
-        run: pip install -r HyperV-Semaphore/requirements-runner.txt PyYAML Jinja2 pykickstart
+        run: pip install -r HyperV-Semaphore/requirements-runner.txt -r HyperV-Semaphore/requirements-iso.txt PyYAML Jinja2 pykickstart
       - name: Instalar coleccion Windows
         run: ansible-galaxy collection install -r HyperV-Semaphore/requirements.yml
       - name: Validar YAML, Jinja y Kickstart RHEL9

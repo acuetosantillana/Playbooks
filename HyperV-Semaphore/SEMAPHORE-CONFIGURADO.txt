@@ -18,9 +18,9 @@ Idioma Windows actual: en-US. Administrador integrado: Administrator.
 
 crear_base incluye instalacion, verificacion, sellado, apagado y captura.
 Windows: respuestas integradas en ISO UEFI sin tecla.
-Rocky: Install predeterminado, timeout 3 segundos y Kickstart integrado.
-Rocky requiere mkksiso y xorriso en runner Linux x86_64 con root para UEFI.
-Se verifica este requisito antes de reservar IP o crear carpetas.
+Rocky: Install predeterminado, timeout 3 segundos y Kickstart en OEMDRV.
+Rocky prepara GRUB y efiboot con bibliotecas Python temporales, sin root.
+Se comprueban Python/pip y dependencias antes de reservar IP o crear carpetas.
 
 Las tareas 23,24,26,27,28,29 se marcaron ARCHIVO - usar flujo unico 25.
 Sus registros se conservan; los playbooks separados se retiraron de la rama.

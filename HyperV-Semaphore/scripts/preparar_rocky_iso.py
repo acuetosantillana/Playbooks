@@ -1,50 +1,83 @@
 """Crear ISO Rocky UEFI que arranca Install y aplica su Kickstart sin teclado."""
 import argparse
-import os
+from io import BytesIO
 import re
 import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 
 
-def boot_replacements(config):
-    entries = re.findall(r"(?m)^\s*menuentry\s+['\"]([^'\"]+)", config)
-    if not entries or not re.match(r"install\s+rocky", entries[0], re.I):
+def automatic_grub(config):
+    first = re.search(r"(?ms)^menuentry\s+['\"]([^'\"]+)['\"][^\n]*\{\s*\n.*?^\}", config)
+    if not first or not re.match(r"install\s+rocky", first.group(1), re.I):
         raise ValueError("La primera entrada UEFI no es Install Rocky; revisar esta ISO.")
     defaults = re.findall(r"(?m)^\s*set\s+default\s*=.*$", config)
     timeouts = re.findall(r"(?m)^\s*set\s+timeout\s*=.*$", config)
     if not defaults or not timeouts:
         raise ValueError("No se reconocen default y timeout en el GRUB de la ISO.")
-    return [(line, 'set default="0"') for line in defaults] + [(line, "set timeout=3") for line in timeouts]
+    text=config[:first.start()]+first.group(0)+'\n'
+    text=re.sub(r'(?m)^\s*set\s+default\s*=.*$', 'set default="0"', text)
+    text=re.sub(r'(?m)^\s*set\s+timeout\s*=.*$', 'set timeout=3', text)
+    text=re.sub(r'(?m)^(\s*linux(?:efi)?\s+.*)$', lambda m: re.sub(r'\s+(?:rd.live.check|inst.ks=\S+)', '', m.group(1))+' inst.ks=hd:LABEL=OEMDRV:/ks.cfg', text)
+    if 'inst.ks=' not in text:
+        raise ValueError('No se encontro la linea linux/linuxefi de Install.')
+    return text
+
+
+def prepare(source, output):
+    import pycdlib
+    from pyfatfs.PyFatFS import PyFatFS
+    shutil.copyfile(source, output)
+    iso=pycdlib.PyCdlib()
+    with open(output,'r+b') as stream, tempfile.TemporaryDirectory(prefix='rocky-efi-') as work:
+        iso.open_fp(stream)
+        patches=[]
+        try:
+            cfg=BytesIO()
+            iso.get_file_from_iso_fp(cfg,rr_path='/EFI/BOOT/grub.cfg')
+            new_cfg=automatic_grub(cfg.getvalue().decode()).encode()
+            # Preservar extents, catalogo El Torito y cargadores firmados.
+            if len(new_cfg)>len(cfg.getvalue()):
+                raise ValueError('La configuracion automatica supera el espacio original.')
+            image=Path(work)/'efiboot.img'
+            iso.get_file_from_iso(local_path=str(image),rr_path='/images/efiboot.img')
+            image_size=image.stat().st_size
+            with PyFatFS(str(image),read_only=False) as fat:
+                if not fat.exists('/EFI/BOOT/grub.cfg'):
+                    raise ValueError('Falta el GRUB UEFI interno; revisar esta ISO.')
+                fat.writetext('/EFI/BOOT/grub.cfg',new_cfg.decode())
+            if image.stat().st_size!=image_size:
+                raise ValueError('Cambio el tamano del arranque UEFI.')
+            for path,data in [('/EFI/BOOT/grub.cfg',new_cfg),('/images/efiboot.img',image.read_bytes())]:
+                record=iso.get_record(rr_path=path)
+                offset=record.extent_location()*2048
+                length=record.data_length
+                if len(data)>length or offset<0 or offset+length>output.stat().st_size:
+                    raise ValueError('El cambio no cabe en el archivo original de la ISO.')
+                patches.append((offset,length,data.ljust(length,b'\n')))
+        finally:
+            iso.close()
+        patches.sort()
+        if patches[0][0]+patches[0][1]>patches[1][0]:
+            raise ValueError('Los archivos de arranque se solapan.')
+        # Sustituir solo los bytes originales, sin recalcular ni mover el
+        # catalogo El Torito, tablas de particiones, paquetes o metadatos ISO.
+        for offset,length,data in patches:
+            stream.seek(offset)
+            stream.write(data)
+        stream.flush()
+    output.chmod(0o600)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", required=True, type=Path)
-    parser.add_argument("--kickstart", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     if args.output.exists() or args.source.resolve() == args.output.resolve():
         raise SystemExit("No se sobrescribe la fuente ni una ISO ya existente.")
-    if os.geteuid() != 0 or not all(shutil.which(tool) for tool in ("mkksiso", "xorriso")):
-        raise SystemExit("El runner Linux requiere mkksiso, xorriso y root para actualizar el arranque UEFI.")
-    with tempfile.TemporaryDirectory(prefix="rocky-grub-") as work:
-        grub = Path(work) / "grub.cfg"
-        subprocess.run(["xorriso", "-osirrox", "on", "-indev", str(args.source), "-extract", "/EFI/BOOT/grub.cfg", str(grub)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        command = ["mkksiso", "--ks", str(args.kickstart), "--rm-args", "rd.live.check"]
-        for old, new in boot_replacements(grub.read_text()):
-            command.extend(["--replace", old, new])
-        command.extend([str(args.source), str(args.output)])
-        # No imprimir KS ni permitir salida del programa con datos de respuestas.
-        subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        os.chmod(args.output, 0o600)
-        verified = Path(work) / "verified.cfg"
-        subprocess.run(["xorriso", "-osirrox", "on", "-indev", str(args.output), "-extract", "/EFI/BOOT/grub.cfg", str(verified)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        text = verified.read_text()
-        if not re.search(r'(?m)^\s*set default="?0"?\s*$', text) or "inst.ks=" not in text or "rd.live.check" in text:
-            raise SystemExit("La ISO creada no acredita Install por defecto y Kickstart.")
-    print("ISO Rocky: Install por defecto, espera 3 segundos, Kickstart integrado y UEFI actualizado.")
+    prepare(args.source,args.output)
+    print("ISO Rocky: Install por defecto, espera 3 segundos, Kickstart en OEMDRV y UEFI actualizado.")
 
 
 if __name__ == "__main__":

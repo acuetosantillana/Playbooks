@@ -1,5 +1,5 @@
 # UNICO PUNTO DE ENTRADA: Semaphore ejecuta este archivo para todas las operaciones.
-# Windows: Autounattend en ISO UEFI. Rocky: Install predeterminado + KS integrado.
+# Windows: Autounattend en ISO UEFI. Rocky: Install predeterminado + KS en OEMDRV.
 - name: Hyper-V - un solo flujo para Windows y Rocky
   hosts: '{{ hyperv_host | default(''SMXHYPVA'') }}'
   gather_facts: false
@@ -38,12 +38,36 @@
       hv_iso_path: '{{ installation_iso_path | default((iso_path | default(windows_iso_default, true)) if vm_os == ''Windows'' else (rocky_iso_path
         | default(rocky_iso_default, true)), true) }}'
   - name: Comprobar herramientas de Rocky antes de reservar la IP o copiar ISO
-    ansible.builtin.shell: command -v mkksiso && command -v xorriso && test "$(id -u)" = 0
+    ansible.builtin.command:
+      argv: [python3, -m, pip, --version]
     delegate_to: localhost
     changed_when: false
     when: accion == 'crear_base' and vm_os == 'Rocky'
+  - name: Crear espacio de dependencias sin privilegios para preparar Rocky
+    ansible.builtin.tempfile:
+      state: directory
+      prefix: hyperv-iso-libs-
+    delegate_to: localhost
+    register: rocky_iso_dependencies
+    when: accion == 'crear_base' and vm_os == 'Rocky'
+  - name: Preparar bibliotecas de ISO en el espacio temporal del runner
+    ansible.builtin.command:
+      argv:
+      - python3
+      - -m
+      - pip
+      - install
+      - --disable-pip-version-check
+      - --no-cache-dir
+      - --target
+      - '{{ rocky_iso_dependencies.path }}'
+      - -r
+      - '{{ playbook_dir }}/../requirements-iso.txt'
+    delegate_to: localhost
+    when: accion == 'crear_base' and vm_os == 'Rocky'
   - name: Mostrar herramientas disponibles en el runner sin modificarlo
-    ansible.builtin.shell: id -u; command -v mkksiso || true; command -v xorriso || true
+    ansible.builtin.command:
+      argv: [python3, -m, pip, --version]
     delegate_to: localhost
     changed_when: false
     register: runner_tools
@@ -241,24 +265,18 @@
           src: '{{ deployment.result.os_iso }}'
           dest: '{{ rocky_media_work.path }}/source.iso'
           flat: true
-      - name: Obtener el Kickstart generado sin mostrar sus hashes
-        ansible.builtin.fetch:
-          src: '{{ deployment.result.stage }}\answers\ks.cfg'
-          dest: '{{ rocky_media_work.path }}/ks.cfg'
-          flat: true
-        no_log: true
-      - name: Integrar KS y fijar Install Rocky como entrada predeterminada
+      - name: Fijar Install Rocky por defecto y localizar KS en OEMDRV
         ansible.builtin.command:
           argv:
           - python3
           - '{{ playbook_dir }}/../scripts/preparar_rocky_iso.py'
           - --source
           - '{{ rocky_media_work.path }}/source.iso'
-          - --kickstart
-          - '{{ rocky_media_work.path }}/ks.cfg'
           - --output
           - '{{ rocky_media_work.path }}/rocky-auto.iso'
         delegate_to: localhost
+        environment:
+          PYTHONPATH: '{{ rocky_iso_dependencies.path }}'
       - name: Transferir la ISO automatica al directorio restringido
         ansible.windows.win_copy:
           src: '{{ rocky_media_work.path }}/rocky-auto.iso'
@@ -286,6 +304,12 @@
           state: absent
         delegate_to: localhost
         when: rocky_media_work.path is defined
+      - name: Retirar bibliotecas temporales de esta preparacion
+        ansible.builtin.file:
+          path: '{{ rocky_iso_dependencies.path }}'
+          state: absent
+        delegate_to: localhost
+        when: rocky_iso_dependencies.path is defined
     - name: Crear medios, VM y rol HA; iniciar instalacion
       ansible.windows.win_powershell:
         path: '{{ playbook_dir }}/../scripts/Crear-VMCluster.ps1'

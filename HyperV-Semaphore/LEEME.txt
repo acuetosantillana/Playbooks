@@ -16,9 +16,11 @@ Los scripts y plantillas de respuestas son auxiliares del mismo flujo.
 
 Windows incluye Autounattend.xml en la ISO UEFI. La ISO actual es en-US y su
 administrador integrado es Administrator; cambiar ambos campos para otra ISO.
-Rocky genera una ISO mediante mkksiso: selecciona Install (entrada 0), espera
-3 segundos y aplica el KS integrado. Requiere runner Linux x86_64 con mkksiso,
-xorriso y root para actualizar efiboot; se valida antes de reservar IP.
+Rocky selecciona Install (entrada 0), espera 3 segundos y aplica el KS desde
+OEMDRV. Prepara su ISO con bibliotecas Python en un directorio temporal privado;
+no requiere root, mkksiso ni xorriso. Modifica GRUB externo y el de efiboot.img
+sin mover extents o catalogo El Torito ni modificar los cargadores EFI firmados.
+Python/pip y las dependencias se comprueban antes de reservar IP.
 El runner necesita espacio temporal para dos ISO completas. La copia original
 del NAS se conserva. Las ISO personalizadas contienen secretos/hashes y se
 retiran tras verificar el invitado.
