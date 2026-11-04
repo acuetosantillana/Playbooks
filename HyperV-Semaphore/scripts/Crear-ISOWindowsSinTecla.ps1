@@ -46,8 +46,16 @@ try {
     Get-ChildItem -LiteralPath $mountedRoot -Force | Copy-Item -Destination $work -Recurse -Force
     # Una entrada El Torito UEFI para Hyper-V Gen2; conserva Secure Boot.
     $arguments=@('-m','-o','-u2','-udfver102','-lWS2025AUTO',('-bootdata:1#pEF,e,b'+$bootFile),$work,$partialIso)
-    & $OscdimgPath @arguments | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Oscdimg fallo con codigo $LASTEXITCODE." }
+    # Oscdimg escribe progreso en stderr incluso cuando termina correctamente.
+    # Redirigir a archivos evita NativeCommandError con WinRM/error_action=stop.
+    $stdout=Join-Path $rootPath 'Media\oscdimg-uefi.stdout.log'
+    $stderr=Join-Path $rootPath 'Media\oscdimg-uefi.stderr.log'
+    $quotedArguments=@($arguments | ForEach-Object { '"'+($_ -replace '(\\*)"','$1$1\"' -replace '(\\+)$','$1$1')+'"' })
+    $process=Start-Process -FilePath $OscdimgPath -ArgumentList $quotedArguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    if ($process.ExitCode -ne 0) {
+        $details=@(Get-Content -LiteralPath $stdout,$stderr -ErrorAction SilentlyContinue | Select-Object -Last 30) -join [Environment]::NewLine
+        throw "Oscdimg fallo con codigo $($process.ExitCode). $details"
+    }
     if (-not (Test-Path -LiteralPath $partialIso -PathType Leaf) -or (Get-Item -LiteralPath $partialIso).Length -eq 0) { throw 'Oscdimg no produjo una ISO utilizable.' }
     Move-Item -LiteralPath $partialIso -Destination $outputIso
     $audit=@{uefi_no_prompt=$true;source_iso=$sourceIso;boot_image=$bootFile;boot_sha256=(Get-FileHash -LiteralPath $bootFile -Algorithm SHA256).Hash;created_utc=[DateTime]::UtcNow.ToString('o')}

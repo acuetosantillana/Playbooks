@@ -130,6 +130,13 @@ valor de la contrasena, en lugar de censurar todo el resultado con no_log.
 recuperar_bloqueo_base.yml archiva una reserva fallida conservando owner.json
 y registro de recuperacion. Exige failed_task_id y expected_lock_created exacto;
 rechaza la recuperacion si existen VM, rol, carpetas o respuesta de la IP.
+Excepcion explicita failed_preparation_root: permite archivar tambien una unica
+carpeta CSV antes de generar respuestas o discos. Solo admite Media y el arbol
+Provisioning/windows-media, sin enlaces, ISO montada ni Oscdimg activo. Conserva
+los archivos en SemaphoreVMs/.failed y registra el destino junto al bloqueo.
+Oscdimg se ejecuta con stdout/stderr separados y ExitCode comprobado: los
+mensajes normales de progreso en stderr no interrumpen WinRM. Sus logs quedan
+en Media/oscdimg-uefi.*.log y Media/oscdimg-answers.*.log.
 No se hace rollback que borre discos ante errores. Se conservan recursos para
 revisar y recuperar; los medios pueden contener contrasenas/hashes.
 La captura solo admite una base dedicada TPL- recien creada por este proceso,

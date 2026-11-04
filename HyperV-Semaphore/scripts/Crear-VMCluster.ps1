@@ -32,8 +32,16 @@ if ($Sistema -eq 'Windows') { $label='HVCONFIG'; $file='Autounattend.xml'; $secu
 if (-not (Test-Path -LiteralPath (Join-Path $answers $file))) { throw 'No se generaron las respuestas de instalacion.' }
 if (-not (Test-Path -LiteralPath $osIso)) { throw 'No se encontro la ISO de instalacion en CSV.' }
 if (Test-Path -LiteralPath $answersIso) { throw 'El medio de respuestas ya existe. No se sobrescribe.' }
-& $OscdimgPath '-n' '-m' "-l$label" $answers $answersIso | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Oscdimg fallo con codigo $LASTEXITCODE." }
+$arguments=@('-n','-m',"-l$label",$answers,$answersIso)
+$quotedArguments=@($arguments | ForEach-Object { '"'+($_ -replace '(\\*)"','$1$1\"' -replace '(\\+)$','$1$1')+'"' })
+$stdout=Join-Path $Root 'Media\oscdimg-answers.stdout.log'
+$stderr=Join-Path $Root 'Media\oscdimg-answers.stderr.log'
+$process=Start-Process -FilePath $OscdimgPath -ArgumentList $quotedArguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+if ($process.ExitCode -ne 0) {
+    $details=@(Get-Content -LiteralPath $stdout,$stderr -ErrorAction SilentlyContinue | Select-Object -Last 30) -join [Environment]::NewLine
+    throw "Oscdimg fallo con codigo $($process.ExitCode). $details"
+}
+if (-not (Test-Path -LiteralPath $answersIso -PathType Leaf) -or (Get-Item -LiteralPath $answersIso).Length -eq 0) { throw 'Oscdimg no produjo el medio de respuestas.' }
 # Proteger el medio con credenciales manteniendo lectura para los procesos VM.
 $acl = Get-Acl -LiteralPath $answersIso
 $acl.SetAccessRuleProtection($true,$false)

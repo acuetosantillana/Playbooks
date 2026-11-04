@@ -14,7 +14,7 @@
           - failed_task_id | default(0) | int > 0
           - expected_lock_created | default('') | length > 0
           - vm_name is match('^TPL-[a-zA-Z0-9-]+$')
-    - name: Archivar solo si no existen VM, rol, carpetas ni respuesta de la IP
+    - name: Archivar solo antes de crear VM y conservando los medios del intento
       ansible.windows.win_powershell:
         path: "{{ playbook_dir }}/../scripts/Archivar-BloqueoFallido.ps1"
         error_action: stop
@@ -26,6 +26,7 @@
           IPAddress: "{{ base_install_ip }}"
           ExpectedCreated: "{{ expected_lock_created }}"
           FailedTaskId: "{{ failed_task_id | int }}"
+          PreparationRoot: "{{ failed_preparation_root | default('') }}"
       register: recovered_lock
     - name: Mostrar registro conservado y disponibilidad para reintentar
       ansible.builtin.debug:

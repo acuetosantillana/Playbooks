@@ -8,6 +8,8 @@ function Get-ClusterSharedVolume { [pscustomobject]@{State='Online';SharedVolume
 function Get-VM { param($ComputerName) if ($global:hvRecoveryTest.HasVM) { [pscustomobject]@{Name='TPL-TEST'} } }
 function Get-ClusterGroup { @() }
 function Test-Connection { param($ComputerName,$Count,[switch]$Quiet,$ErrorAction) $false }
+function Get-Process { param($Name,$ErrorAction) @() }
+function Get-DiskImage { param($ImagePath,$ErrorAction) [pscustomobject]@{Attached=$false} }
 $recovery=Join-Path $projectRoot 'scripts\Archivar-BloqueoFallido.ps1'
 $timestamp='2026-11-04T01:26:25.8453407Z'
 function New-LockFixture {
@@ -32,4 +34,17 @@ $library=New-LockFixture 'mismatch'
 $blocked=$false
 try { & $recovery -Library $library -CsvVolumes @($testRoot) -ClusterNodes @('TEST') -VmName TPL-TEST -IPAddress 192.0.2.5 -ExpectedCreated '2026-11-03T00:00:00Z' -FailedTaskId 1 } catch { $blocked=$_.Exception.Message -match 'ya no coincide' }
 if (-not $blocked -or -not (Test-Path (Join-Path $library '.locks\192.0.2.5\owner.json'))) { throw 'Se modifico un bloqueo distinto al seleccionado.' }
-'OK: archivado recuperable; VM existente y fecha distinta protegidas.'
+$library=New-LockFixture 'media'
+$preparation=Join-Path $testRoot 'SemaphoreVMs\TPL-TEST'
+New-Item -ItemType Directory -Path (Join-Path $preparation 'Media'),(Join-Path $preparation 'Provisioning\windows-media\sources') -Force | Out-Null
+Set-Content (Join-Path $preparation 'Media\os.iso') 'test original ISO'
+Set-Content (Join-Path $preparation 'Provisioning\windows-media\sources\boot.wim') 'test copied content'
+New-Item -ItemType Directory -Path (Join-Path $preparation 'Virtual Hard Disks') | Out-Null
+$blocked=$false
+try { & $recovery -Library $library -CsvVolumes @($testRoot) -ClusterNodes @('TEST') -VmName TPL-TEST -IPAddress 192.0.2.5 -ExpectedCreated $timestamp -FailedTaskId 2 -PreparationRoot $preparation } catch { $blocked=$_.Exception.Message -match 'recursos fuera' }
+if (-not $blocked -or -not (Test-Path $preparation)) { throw 'Se admitio archivar una carpeta posterior a crear discos.' }
+# Solo se retira la carpeta vacia creada por esta prueba, sin recursion.
+Remove-Item -LiteralPath (Join-Path $preparation 'Virtual Hard Disks')
+& $recovery -Library $library -CsvVolumes @($testRoot) -ClusterNodes @('TEST') -VmName TPL-TEST -IPAddress 192.0.2.5 -ExpectedCreated $timestamp -FailedTaskId 2 -PreparationRoot $preparation
+if ((Test-Path $preparation) -or (Get-Content (Join-Path $Ansible.Result.preparation_archive 'Media\os.iso')) -ne 'test original ISO') { throw 'No se conservo la preparacion archivada.' }
+'OK: archivado recuperable de bloqueo y medios; VM, discos y fecha distinta protegidos.'

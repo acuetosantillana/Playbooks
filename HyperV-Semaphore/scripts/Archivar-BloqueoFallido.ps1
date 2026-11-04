@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^TPL-[a-zA-Z0-9-]+$')][string]$VmName,
     [Parameter(Mandatory)][string]$IPAddress,
     [Parameter(Mandatory)][DateTimeOffset]$ExpectedCreated,
-    [Parameter(Mandatory)][ValidateRange(1,2147483647)][int]$FailedTaskId
+    [Parameter(Mandatory)][ValidateRange(1,2147483647)][int]$FailedTaskId,
+    [string]$PreparationRoot=''
 )
 $ErrorActionPreference='Stop'
 $Ansible.Changed=$false
@@ -28,17 +29,38 @@ foreach ($node in $ClusterNodes) {
     if (Get-VM -ComputerName $node -ErrorAction Stop | Where-Object Name -eq $VmName) { throw 'Existe una VM con ese nombre; no es seguro liberar la IP automaticamente.' }
 }
 if (Get-ClusterGroup -ErrorAction Stop | Where-Object Name -eq $VmName) { throw 'Existe un rol de cluster para esa base.' }
-foreach ($csv in $CsvVolumes) {
-    if (Test-Path -LiteralPath (Join-Path (Join-Path $csv 'SemaphoreVMs') $VmName)) { throw 'Existe una carpeta de preparacion; revisar su contenido antes de recuperar.' }
-}
+$preparationPaths=@($CsvVolumes | ForEach-Object { [IO.Path]::GetFullPath((Join-Path (Join-Path $_ 'SemaphoreVMs') $VmName)) })
+$existingPaths=@($preparationPaths | Where-Object { Test-Path -LiteralPath $_ })
+$archivePreparation=''
+if ($PreparationRoot) {
+    $archivePreparation=[IO.Path]::GetFullPath($PreparationRoot).TrimEnd('\')
+    if ($archivePreparation -notin $preparationPaths -or $existingPaths.Count -ne 1 -or $existingPaths[0] -ne $archivePreparation) { throw 'La carpeta no coincide con la unica preparacion autorizada.' }
+    if (Get-Process -Name oscdimg -ErrorAction SilentlyContinue) { throw 'Oscdimg sigue activo; no se mueve su preparacion.' }
+    $items=@(Get-ChildItem -LiteralPath $archivePreparation -Recurse -Force)
+    if ($items | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) { throw 'Se detecto un enlace en la preparacion.' }
+    foreach ($item in $items) {
+        $relative=$item.FullName.Substring($archivePreparation.Length+1)
+        # Solo el estado anterior a generar respuestas o crear discos/VM.
+        if ($relative -notmatch '^(Media|Provisioning)$|^Provisioning\\windows-media(?:\\.*)?$|^Media\\(?:os\.iso|os-uefi-auto\.iso(?:\.partial)?|os-uefi-auto\.json|oscdimg-uefi\.(?:stdout|stderr)\.log)$') { throw "Hay recursos fuera de la preparacion de ISO: $relative" }
+    }
+    $sourceImage=Join-Path $archivePreparation 'Media\os.iso'
+    if ((Get-DiskImage -ImagePath $sourceImage -ErrorAction Stop).Attached) { throw 'La ISO sigue montada; no se mueve.' }
+} elseif ($existingPaths.Count -gt 0) { throw 'Existe una carpeta de preparacion; revisar su contenido antes de recuperar.' }
 if (Test-Connection -ComputerName $IPAddress -Count 1 -Quiet -ErrorAction SilentlyContinue) { throw 'La IP responde. Se conserva el bloqueo.' }
 $history=[IO.Path]::GetFullPath((Join-Path $locks '.history'))
 $destination=[IO.Path]::GetFullPath((Join-Path $history ($ip.ToString()+'-task'+$FailedTaskId+'-'+[guid]::NewGuid().ToString('N'))))
 if (-not $destination.StartsWith($history+'\',[StringComparison]::OrdinalIgnoreCase) -or -not $history.StartsWith($locks+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Destino de archivo fuera del directorio de bloqueos.' }
 New-Item -ItemType Directory -Path $history -Force | Out-Null
+if ($archivePreparation) {
+    $archiveParent=[IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $archivePreparation) '.failed'))
+    $archiveTarget=[IO.Path]::GetFullPath((Join-Path $archiveParent ($VmName+'-task'+$FailedTaskId+'-'+[guid]::NewGuid().ToString('N'))))
+    if (-not $archiveTarget.StartsWith($archiveParent+'\',[StringComparison]::OrdinalIgnoreCase) -or $archivePreparation -notin $preparationPaths) { throw 'Ruta de archivo fuera del directorio autorizado.' }
+    New-Item -ItemType Directory -Path $archiveParent -Force | Out-Null
+    Move-Item -LiteralPath $archivePreparation -Destination $archiveTarget -ErrorAction Stop
+}
 # Conserva owner.json completo. No elimina datos y no toca VM ni discos.
 Move-Item -LiteralPath $source -Destination $destination -ErrorAction Stop
-@{failed_task=$FailedTaskId;vm=$VmName;ip=$IPAddress;archived_utc=[DateTime]::UtcNow.ToString('o');reason='Preparacion fallida antes de crear VM o carpeta'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'recovery.json') -Encoding UTF8
-$Ansible.Result=@{ip=$IPAddress;vm=$VmName;archived_at=$destination;ready_to_retry=$true}
+@{failed_task=$FailedTaskId;vm=$VmName;ip=$IPAddress;archived_utc=[DateTime]::UtcNow.ToString('o');preparation_archive=$archiveTarget;reason='Preparacion fallida antes de crear VM'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'recovery.json') -Encoding UTF8
+$Ansible.Result=@{ip=$IPAddress;vm=$VmName;archived_at=$destination;preparation_archive=$archiveTarget;ready_to_retry=$true}
 $Ansible.Changed=$true
 } finally { $guard.Dispose() }

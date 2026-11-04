@@ -19,6 +19,16 @@ function Get-DiskImage { param($ImagePath) [pscustomobject]@{Attached=$global:hv
 function Mount-DiskImage { param($ImagePath,$StorageType,$Access,[switch]$PassThru) $global:hvAutoTestState.MountCount++; [pscustomobject]@{Attached=$true;ImagePath=$ImagePath} }
 function Dismount-DiskImage { param($ImagePath) $global:hvAutoTestState.DismountCount++ }
 function Get-Volume { param([Parameter(ValueFromPipeline)]$InputObject) process { [pscustomobject]@{DriveLetter=$global:hvAutoTestState.MockDriveRoot.Substring(0,1)} } }
+function Start-Process {
+    param($FilePath,$ArgumentList,[switch]$NoNewWindow,[switch]$Wait,[switch]$PassThru,$RedirectStandardOutput,$RedirectStandardError)
+    if (-not $Wait -or -not $PassThru -or -not $RedirectStandardOutput -or -not $RedirectStandardError) { throw 'Falta esperar el proceso y aislar sus dos salidas.' }
+    $decoded=@($ArgumentList | ForEach-Object { $_.Substring(1,$_.Length-2) })
+    $decoded | ConvertTo-Json | Set-Content -LiteralPath ($decoded[-1]+'.args.json')
+    Set-Content -LiteralPath $decoded[-1] -Value 'TEST GENERATED ISO'
+    Set-Content -LiteralPath $RedirectStandardOutput -Value 'TEST STDOUT'
+    Set-Content -LiteralPath $RedirectStandardError -Value 'TEST STDERR PROGRESS'
+    [pscustomobject]@{ExitCode=$global:hvAutoTestState.FakeExitCode}
+}
 function Test-Path {
     [CmdletBinding()]param([string]$LiteralPath,[string]$Path,[string]$PathType)
     if ($LiteralPath -in @(($global:hvAutoTestState.MockDriveRoot+'sources\boot.wim'),($global:hvAutoTestState.MockDriveRoot+'setup.exe'))) { return $true }
@@ -57,9 +67,25 @@ $missingRejected=$false
 try { Invoke-FixtureBuild -Case Missing -Boot (Join-Path $testRoot 'missing\efisys_noprompt.bin') } catch { $missingRejected=$_.Exception.Message -match 'no existe' }
 if (-not $missingRejected -or $global:hvAutoTestState.DismountCount -ne 1) { throw 'Archivo ausente no produce error con liberacion de montaje.' }
 $failureRejected=$false
-try { Invoke-FixtureBuild -Case Failure -ExitCode 5 } catch { $failureRejected=$_.Exception.Message -match 'codigo 5' }
+try { Invoke-FixtureBuild -Case Failure -ExitCode 5 } catch { $failureRejected=$_.Exception.Message -match 'codigo 5' -and $_.Exception.Message -match 'TEST STDERR PROGRESS' }
 if (-not $failureRejected -or $global:hvAutoTestState.DismountCount -ne 1) { throw 'Oscdimg fallido no interrumpe de forma correcta.' }
 # El codigo 5 anterior es un fallo simulado que ya fue comprobado. GitHub propaga
 # LASTEXITCODE aunque PowerShell haya capturado correctamente la excepcion.
 $global:LASTEXITCODE=0
+# Regresion con proceso nativo real: stderr no debe terminar PowerShell, pero
+# un codigo no cero debe seguir siendo visible bajo ErrorActionPreference Stop.
+$nativeFixture=Join-Path $testRoot 'native-stderr.ps1'
+@'
+param([int]$Code)
+[Console]::Error.WriteLine('native progress on stderr')
+exit $Code
+'@ | Set-Content -LiteralPath $nativeFixture
+$nativeShell=Join-Path $PSHOME 'powershell.exe'
+if (-not (Microsoft.PowerShell.Management\Test-Path -LiteralPath $nativeShell)) { $nativeShell=Join-Path $PSHOME 'pwsh.exe' }
+foreach ($code in @(0,5)) {
+    $nativeOut=Join-Path $testRoot "native-$code.out"
+    $nativeErr=Join-Path $testRoot "native-$code.err"
+    $nativeProcess=Microsoft.PowerShell.Management\Start-Process -FilePath $nativeShell -ArgumentList @('-NoProfile','-File',('"'+$nativeFixture+'"'),'-Code',"$code") -NoNewWindow -Wait -PassThru -RedirectStandardOutput $nativeOut -RedirectStandardError $nativeErr
+    if ($nativeProcess.ExitCode -ne $code -or (Get-Content -LiteralPath $nativeErr -Raw) -notmatch 'native progress') { throw 'La captura nativa no conservo stderr y codigo de salida.' }
+}
 'OK: ISO UEFI sin tecla, ruta con espacios, fuente conservada, montajes propios/ajenos y fallos de dependencia/Oscdimg.'

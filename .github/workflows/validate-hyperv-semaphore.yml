@@ -39,6 +39,9 @@ jobs:
       - name: Verificar preparacion de ISO UEFI sin teclado con simulaciones
         shell: pwsh
         run: ./HyperV-Semaphore/tests/Verificar-ISOAutomatico.ps1
+      - name: Verificar stderr nativo bajo Windows PowerShell 5.1
+        shell: powershell
+        run: ./HyperV-Semaphore/tests/Verificar-ISOAutomatico.ps1
       - name: Verificar recuperacion conservando bloqueos y protegiendo VM existentes
         shell: pwsh
         run: ./HyperV-Semaphore/tests/Verificar-Recuperacion.ps1
