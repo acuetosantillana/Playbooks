@@ -28,6 +28,7 @@ if [ -f /var/lib/dbus/machine-id ] && [ ! -L /var/lib/dbus/machine-id ]; then
 fi
 find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*key*' -delete
 # Ninguna cuenta del disco maestro conserva una contrasena compartida activa.
+rm -f /etc/ssh/sshd_config.d/00-semaphore-base.conf
 passwd -l root
 while IFS=: read -r account _ uid _; do
     if [ "$uid" -ge 1000 ] && [ "$account" != nobody ]; then usermod -L "$account"; fi

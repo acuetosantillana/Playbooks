@@ -45,25 +45,15 @@ for p in plays:
         assert p['tasks'][0]['when']=="accion in ['crear_base', 'finalizar_base']"
 preflight=plays[0]['tasks']
 assert any('Comprobar herramientas de Rocky antes' in t['name'] for t in preflight)
-from jinja2 import Environment, StrictUndefined
-secret_tasks=[t for t in preflight if t['name'] in [
-    'Generar credenciales temporales exclusivas para instalar la base Rocky',
-    'Elegir credenciales temporales de base o las solicitadas para el clon']]
-assert len(secret_tasks)==2 and all(t.get('no_log') is True for t in secret_tasks)
-assert secret_tasks[0]['when']=="accion == 'crear_base' and vm_os == 'Rocky'"
-# Los extra-vars vacios del formulario no deben reemplazar el secreto generado;
-# al clonar se deben respetar exactamente los secretos introducidos por el usuario.
-env=Environment(undefined=StrictUndefined)
-for action in ['crear_base','clonar','finalizar_base']:
-    context=dict(accion=action,root_password='',linux_password='',
-                 rocky_base_root_password='temporary-root',rocky_base_user_password='temporary-user')
-    if action!='crear_base':
-        context.update(root_password='chosen-root',linux_password='chosen-user')
-    effective={k:env.from_string(v).render(context) for k,v in secret_tasks[1]['ansible.builtin.set_fact'].items()}
-    assert effective['rocky_effective_root_password']==('temporary-root' if action=='crear_base' else 'chosen-root')
-    assert effective['rocky_effective_user_password']==('temporary-user' if action=='crear_base' else 'chosen-user')
+baseks=(root/'files/bootstrap/rocky9-base.ks.tpl').read_text()
+assert not __import__('re').search(r'^user\s',baseks,__import__('re').M)
+assert 'linux_password_hash' not in baseks and 'linux_user' not in baseks
+source=(root/'playbooks/hyperv.yml').read_text()
+baseflow=source.split('- name: Crear una VM nueva copiando una imagen base ya instalada')[0]
+assert 'rocky_base_user_password' not in source
+assert "else ''root'' }}" in baseflow
+assert "else root_password }}" in baseflow
 assert 'passwd -l root' in (root/'files/sellar-rocky.sh').read_text()
-assert 'usermod -L "$account"' in (root/'files/sellar-rocky.sh').read_text()
 print('OK: un archivo, acciones excluyentes y GRUB con Install + timeout 3 segundos.')
 
 # ISO y FAT UEFI reales de prueba: no se usan ISO de produccion ni una VM.

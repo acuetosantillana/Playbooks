@@ -5,7 +5,6 @@ keyboard --vckeymap=latam --xlayouts=latam
 timezone America/Mexico_City --utc
 network --bootproto=static --ip={{ vm_ip }} --netmask={{ vm_netmask }} --gateway={{ vm_gateway }} --nameserver={{ vm_dns1 }}{{ vm_dns_suffix }} --device=link --activate --onboot=yes --hostname={{ vm_name }}
 rootpw --iscrypted {{ root_password_hash }}
-user --name={{ linux_user }} --password={{ linux_password_hash }} --iscrypted --groups=wheel
 selinux --enforcing
 firewall --enabled --service=ssh
 services --enabled=sshd
@@ -33,6 +32,10 @@ xfsprogs
 set -euo pipefail
 # Se activara al sellar. El primer arranque conserva la red estatica del KS.
 touch /etc/cloud/cloud-init.disabled
+# Acceso de aprovisionamiento solo de la base; se retira al sellar.
+install -d -m 0755 /etc/ssh/sshd_config.d
+printf '%s\n' 'PermitRootLogin yes' 'PasswordAuthentication yes' > /etc/ssh/sshd_config.d/00-semaphore-base.conf
+chmod 0600 /etc/ssh/sshd_config.d/00-semaphore-base.conf
 systemctl enable sshd
 printf '%s\n' '{{ vm_name }}' > /etc/semaphore-provisioning-complete
 %end

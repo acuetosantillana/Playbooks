@@ -37,17 +37,12 @@
       windows_admin_user: '{{ windows_account | default(''Administrator'', true) }}'
       hv_iso_path: '{{ installation_iso_path | default((iso_path | default(windows_iso_default, true)) if vm_os == ''Windows'' else (rocky_iso_path
         | default(rocky_iso_default, true)), true) }}'
-  - name: Generar credenciales temporales exclusivas para instalar la base Rocky
-    ansible.builtin.set_fact:
-      rocky_base_root_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=40, chars=['ascii_letters', 'digits']) }}"
-      rocky_base_user_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=40, chars=['ascii_letters', 'digits']) }}"
+  - name: Exigir contrasena root de la base Rocky antes de reservar IP
+    ansible.builtin.assert:
+      that:
+      - root_password | default('', true) | length > 0
+      fail_msg: Introduce la contrasena root de Rocky; el usuario adicional se crea solo al clonar.
     when: accion == 'crear_base' and vm_os == 'Rocky'
-    no_log: true
-  - name: Elegir credenciales temporales de base o las solicitadas para el clon
-    ansible.builtin.set_fact:
-      rocky_effective_root_password: "{{ rocky_base_root_password if accion == 'crear_base' else root_password }}"
-      rocky_effective_user_password: "{{ rocky_base_user_password if accion == 'crear_base' else linux_password }}"
-    when: vm_os == 'Rocky'
     no_log: true
   - name: Comprobar herramientas de Rocky antes de reservar la IP o copiar ISO
     ansible.builtin.command:
@@ -217,9 +212,8 @@
     - name: Validar secretos de Rocky
       ansible.builtin.assert:
         that:
-        - rocky_effective_root_password | length > 0
-        - rocky_effective_user_password | length > 0
-        fail_msg: No se generaron las credenciales temporales de instalacion de Rocky.
+        - root_password | length > 0
+        fail_msg: Rocky requiere tu contrasena root para instalar y verificar la base.
       when: vm_os == 'Rocky'
       no_log: true
     - name: Validar credenciales opcionales de NAS
@@ -275,16 +269,14 @@
     - name: Generar Kickstart con hashes SHA512 sin prompts interactivos
       ansible.windows.win_powershell:
         script: |
-          param([string]$Stage, [Security.SecureString]$RootHash, [Security.SecureString]$UserHash)
-          & (Join-Path $Stage 'Generar-Respuestas.ps1') -Sistema Rocky -Configuracion (Join-Path $Stage 'vm.json') -Salida (Join-Path $Stage 'answers') -RootPasswordHash $RootHash -LinuxPasswordHash $UserHash
+          param([string]$Stage, [Security.SecureString]$RootHash)
+          & (Join-Path $Stage 'Generar-Respuestas.ps1') -Sistema Rocky -Configuracion (Join-Path $Stage 'vm.json') -Salida (Join-Path $Stage 'answers') -RootPasswordHash $RootHash
         error_action: stop
         parameters:
           Stage: '{{ deployment.result.stage }}'
         sensitive_parameters:
         - name: RootHash
-          value: '{{ rocky_effective_root_password | password_hash(''sha512'') }}'
-        - name: UserHash
-          value: '{{ rocky_effective_user_password | password_hash(''sha512'') }}'
+          value: '{{ root_password | password_hash(''sha512'') }}'
       when: vm_os == 'Rocky'
       no_log: true
     - name: Integrar respuestas en la ISO UEFI Windows sin pulsar una tecla
@@ -419,8 +411,8 @@
         ansible_host: '{{ vm_ip }}'
         ansible_connection: '{{ ''winrm'' if vm_os == ''Windows'' else ''ssh'' }}'
         ansible_port: '{{ 5985 if vm_os == ''Windows'' else 22 }}'
-        ansible_user: '{{ windows_admin_user if vm_os == ''Windows'' else linux_user }}'
-        ansible_password: '{{ admin_password if vm_os == ''Windows'' else rocky_effective_user_password }}'
+        ansible_user: '{{ windows_admin_user if vm_os == ''Windows'' else ''root'' }}'
+        ansible_password: '{{ admin_password if vm_os == ''Windows'' else root_password }}'
         ansible_winrm_transport: ntlm
         ansible_winrm_message_encryption: always
         ansible_ssh_common_args: '{{ '''' if vm_os == ''Windows'' else ''-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile='' + ssh_hosts_file.path
@@ -570,9 +562,7 @@
     block:
     - name: Preparar y apagar la base Rocky
       when: expected_system == 'Rocky'
-      become: true
-      vars:
-        ansible_become_password: '{{ ansible_password }}'
+      become: false
       block:
       - name: Copiar herramienta de sellado dentro de la base
         ansible.builtin.copy:

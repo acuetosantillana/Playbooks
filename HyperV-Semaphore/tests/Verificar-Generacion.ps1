@@ -38,11 +38,15 @@ try { & $generator -Sistema Windows -Configuracion $json -Salida (Join-Path $tes
 if (-not $rejected) { throw 'No se rechazo la mascara invalida.' }
 $config.vm_mask=24
 $config.solo_base=$true
+$config.Remove('linux_user')
 $config | ConvertTo-Json | Set-Content $json
 $baseOutput=Join-Path $testRoot 'rocky-base'
-& $generator -Sistema Rocky -Configuracion $json -Salida $baseOutput -RootPasswordHash $hash -LinuxPasswordHash $hash
+& $generator -Sistema Rocky -Configuracion $json -Salida $baseOutput -RootPasswordHash $hash
 $baseKS=Get-Content (Join-Path $baseOutput 'ks.cfg') -Raw
 if ($baseKS -match 'docker|nginx|@development' -or $baseKS -notmatch '(?m)^cloud-init$') { throw 'La base Rocky no es minima.' }
+if ($baseKS -match '(?m)^user\s' -or $baseKS -match 'linux_password_hash|linux_user') { throw 'La base no debe crear usuarios adicionales.' }
+$config.linux_user='adm'
+$config | ConvertTo-Json | Set-Content $json
 $personalizer=Join-Path $root 'files\bootstrap\Personalizar-Clon.ps1'
 foreach ($system in @('Windows','Rocky')) {
     $cloneRoot=Join-Path $testRoot ('clone-'+$system)

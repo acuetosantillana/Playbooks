@@ -17,8 +17,10 @@ ISO alternativa opcional; credenciales NAS del grupo existente.
 Idioma Windows actual: en-US. Administrador integrado: Administrator.
 
 crear_base incluye instalacion, verificacion, sellado, apagado y captura.
-Rocky crear_base genera contrasenas aleatorias temporales sin pedir las del clon.
-Se usan solo para autenticar/verificar/sellar esa instalacion; el sellado las bloquea.
+Rocky crear_base requiere la contrasena root elegida por el usuario.
+La base no crea adm ni otro usuario adicional: se verifica y sella mediante root.
+El nombre de usuario y su contrasena se aplican exclusivamente al clonar.
+El sellado bloquea root y las cuentas del maestro; el clon configura sus propias credenciales.
 Rocky clonar exige las contrasenas elegidas para root y el usuario del nuevo clon.
 finalizar_base continua una base instalada y encendida si fallo antes del sellado.
 Valida UUID, manifiesto, disco y reserva; autentica y verifica otra vez el invitado.

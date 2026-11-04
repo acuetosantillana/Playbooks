@@ -87,8 +87,12 @@ if ($Sistema -eq 'Windows') {
     $rendered = $xml.OuterXml
     $fileName = 'Autounattend.xml'
 } else {
-    if ($values.linux_user -notmatch '^[a-z_][a-z0-9_-]{0,31}$') { throw 'linux_user invalido.' }
-    foreach ($key in 'root_password_hash','linux_password_hash') {
+    $hashKeys = @('root_password_hash')
+    if ($values.solo_base -ne $true) {
+        if ($values.linux_user -notmatch '^[a-z_][a-z0-9_-]{0,31}$') { throw 'linux_user invalido.' }
+        $hashKeys += 'linux_password_hash'
+    }
+    foreach ($key in $hashKeys) {
         $secureHash = $RootPasswordHash
         if ($key -eq 'linux_password_hash') { $secureHash = $LinuxPasswordHash }
         if (-not $secureHash) { throw "Semaphore debe proporcionar $key como SecureString." }
