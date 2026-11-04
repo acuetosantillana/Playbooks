@@ -22,8 +22,8 @@ Rocky: Install predeterminado, timeout 3 segundos y Kickstart en OEMDRV.
 Rocky prepara GRUB y efiboot con bibliotecas Python temporales, sin root.
 Se comprueban Python/pip y dependencias antes de reservar IP o crear carpetas.
 
-Las tareas 23,24,26,27,28,29 se marcaron ARCHIVO - usar flujo unico 25.
-Sus registros se conservan; los playbooks separados se retiraron de la rama.
+Las tareas antiguas 23,24,26,27,28,29 fueron eliminadas con confirmacion del usuario.
+El unico flujo de esta implementacion es la tarea 25 y playbooks/hyperv.yml.
 Las tareas originales 11 y 13 y Windows/ y Linux/ se conservan.
 
 No se han capturado aun las bases. Usar RUN en cabecera de tarea 25 para tomar
