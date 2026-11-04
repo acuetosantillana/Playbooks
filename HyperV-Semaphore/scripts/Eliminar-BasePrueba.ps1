@@ -30,8 +30,7 @@ if (Test-Path -LiteralPath (Join-Path $libraryPath 'ws2025-base-v1\metadata.json
 $lockPath=[IO.Path]::GetFullPath((Join-Path (Join-Path $libraryPath '.locks') $ip))
 $lockOwner=Get-Content -LiteralPath (Join-Path $lockPath 'owner.json') -Raw | ConvertFrom-Json
 if ($lockOwner.vm -ne $vmName -or $lockOwner.ip -ne $ip -or [DateTimeOffset]$lockOwner.created -ne $ExpectedLockCreated) { throw 'La reserva corresponde a otro intento.' }
-$group=Get-ClusterGroup -Name $vmName -ErrorAction Stop
-$node=$group.OwnerNode.Name
+$group=Get-ClusterGroup -ErrorAction Stop | Where-Object Name -eq $vmName
 $registered=@(foreach ($clusterNode in Get-ClusterNode) { Get-VM -ComputerName $clusterNode.Name -ErrorAction Stop | Where-Object { $_.Id -eq $ExpectedVMId -or $_.Name -eq $vmName } })
 if ($registered | Where-Object { $_.Id -ne $ExpectedVMId -or $_.Name -ne $vmName }) { throw 'Existe otra VM con el nombre de prueba.' }
 $expectedDisk=Join-Path $rootPath ('Virtual Hard Disks\'+$vmName+'.vhdx')
@@ -41,10 +40,12 @@ if ($registered.Count -eq 1) {
     if (Get-VMSnapshot -VM $vm -ErrorAction Stop) { throw 'La VM tiene checkpoints; no se admite limpieza automatica.' }
     $disks=@(Get-VMHardDiskDrive -VM $vm -ErrorAction Stop)
     if ($disks.Count -ne 1 -or [IO.Path]::GetFullPath($disks[0].Path) -ne $expectedDisk) { throw 'El disco conectado no es el unico disco de prueba autorizado.' }
-} elseif ($registered.Count -eq 0 -and $group.State -eq 'Offline') {
+} elseif ($registered.Count -eq 0 -and (-not $group -or $group.State -eq 'Offline')) {
     # El recurso de configuracion puede desregistrar la VM al quedar Offline.
-    $clusterIds=@($group | Get-ClusterResource | Get-ClusterParameter | Where-Object { $_.Name -in @('VmId','VirtualMachineId') } | ForEach-Object { [string]$_.Value })
-    if ($ExpectedVMId.ToString() -notin $clusterIds) { throw 'El rol Offline no acredita el identificador esperado.' }
+    if ($group) {
+        $clusterIds=@($group | Get-ClusterResource | Get-ClusterParameter | Where-Object { $_.Name -in @('VmId','VirtualMachineId') } | ForEach-Object { [string]$_.Value })
+        if ($ExpectedVMId.ToString() -notin $clusterIds) { throw 'El rol Offline no acredita el identificador esperado.' }
+    }
     $diskFiles=@(Get-ChildItem -LiteralPath $rootPath -Recurse -File | Where-Object Extension -in @('.vhd','.vhdx','.avhd','.avhdx'))
     if ($diskFiles.Count -ne 1 -or $diskFiles[0].FullName -ne $expectedDisk) { throw 'Los discos conservados no coinciden con la prueba.' }
 } else { throw 'Registro de VM ambiguo o rol no Offline.' }
@@ -57,15 +58,26 @@ foreach ($clusterNode in Get-ClusterNode) {
 }
 $Ansible.Result=@{validated=$true;vm=$vmName;vm_id=$ExpectedVMId.ToString();root=$rootPath;apply=[bool]$Apply}
 if (-not $Apply) { return }
-if ($group.State -ne 'Offline') { Stop-ClusterGroup -Name $vmName -Wait 120 -ErrorAction Stop | Out-Null }
+if ($group -and $group.State -ne 'Offline') { Stop-ClusterGroup -Name $vmName -Wait 120 -ErrorAction Stop | Out-Null }
 $Ansible.Changed=$true
 $remaining=@(foreach ($clusterNode in Get-ClusterNode) { Get-VM -ComputerName $clusterNode.Name -ErrorAction Stop | Where-Object Id -eq $ExpectedVMId })
 foreach ($vm in $remaining) { if ($vm.State -ne 'Off') { Stop-VM -VM $vm -TurnOff -Force -ErrorAction Stop } }
-Remove-ClusterGroup -Name $vmName -RemoveResources -Force -ErrorAction Stop
-foreach ($clusterNode in Get-ClusterNode) {
-    foreach ($vm in @(Get-VM -ComputerName $clusterNode.Name -ErrorAction Stop | Where-Object Id -eq $ExpectedVMId)) { Remove-VM -VM $vm -Force -ErrorAction Stop }
-    if (Get-VM -ComputerName $clusterNode.Name -ErrorAction Stop | Where-Object Id -eq $ExpectedVMId) { throw 'La VM sigue registrada; se conservan los archivos.' }
-}
+if ($group) { Remove-ClusterGroup -Name $vmName -RemoveResources -Force -ErrorAction Stop }
+# Al quitar el rol, la configuracion puede reaparecer brevemente como VM local.
+# Volver a resolver por UUID, validar ubicacion y esperar su retirada en ambos nodos.
+$deadline=[DateTime]::UtcNow.AddSeconds(60)
+do {
+    foreach ($clusterNode in Get-ClusterNode) {
+        foreach ($vm in @(Get-VM -ComputerName $clusterNode.Name -ErrorAction Stop | Where-Object Id -eq $ExpectedVMId)) {
+            if ($vm.Name -ne $vmName -or -not ([IO.Path]::GetFullPath($vm.ConfigurationLocation).TrimEnd('\')+'\').StartsWith($rootPath+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Cambio la identidad o ubicacion de la VM.' }
+            if ($vm.State -ne 'Off') { Stop-VM -VM $vm -TurnOff -Force -ErrorAction Stop }
+            Remove-VM -VM $vm -Force -ErrorAction Stop
+        }
+    }
+    Start-Sleep -Seconds 2
+    $stillRegistered=@(foreach ($clusterNode in Get-ClusterNode) { Get-VM -ComputerName $clusterNode.Name -ErrorAction Stop | Where-Object Id -eq $ExpectedVMId })
+} while ($stillRegistered.Count -gt 0 -and [DateTime]::UtcNow -lt $deadline)
+if ($stillRegistered.Count -gt 0) { throw 'La VM sigue registrada; se conservan los archivos.' }
 # Target absoluto exacto validado arriba. Nunca se borra CSV, biblioteca o NAS.
 if ([IO.Path]::GetFullPath($rootPath).TrimEnd('\') -notin $allowedRoots) { throw 'Ruta final de borrado invalida.' }
 Remove-Item -LiteralPath $rootPath -Recurse -Force -ErrorAction Stop
