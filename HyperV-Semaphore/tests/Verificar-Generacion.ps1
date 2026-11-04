@@ -64,7 +64,7 @@ foreach ($system in @('Windows','Rocky')) {
         $userData=((Get-Content (Join-Path $seedRoot 'user-data') -Raw) -replace '^#cloud-config\s*','') | ConvertFrom-Json
         $network=Get-Content (Join-Path $seedRoot 'network-config') -Raw | ConvertFrom-Json
         if ($metadata.'instance-id' -ne $identity -or $network.config[0].mac_address -ne '02:01:02:03:04:05' -or $network.config[0].subnets[0].address -ne '192.0.2.20/24') { throw 'Identidad/red de cloud-init incorrectas.' }
-        if ($userData.users[0].passwd -notlike '$6$*' -or $userData.users[0].name -ne 'adm') { throw 'Usuario/hash de cloud-init incorrectos.' }
+        if ($userData.users[0].hashed_passwd -notlike '$6$*' -or $userData.users[0].PSObject.Properties.Name -contains 'passwd' -or $userData.users[0].name -ne 'adm') { throw 'Se requiere hashed_passwd para reemplazar la contrasena del usuario preexistente.' }
     }
 }
 'OK: sintaxis PowerShell, XML escapado, idioma, administrador, secuencia unica, red /23, hashes y rechazo de mascara invalida.'

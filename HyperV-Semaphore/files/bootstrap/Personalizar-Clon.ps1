@@ -77,7 +77,7 @@ if ($manifest.system -eq 'Windows') {
     foreach ($hash in @($rootPassword,$userPassword)) { if ($hash -notmatch '^\$6\$') { throw 'Se requieren hashes SHA512 crypt.' } }
     $cloud=@{
         hostname=$cfg.vm_name; manage_etc_hosts=$true; ssh_pwauth=$true; disable_root=$true;
-        users=@(@{name=$cfg.linux_user;groups='wheel';sudo='ALL=(ALL) ALL';lock_passwd=$false;passwd=$userPassword;shell='/bin/bash'});
+        users=@(@{name=$cfg.linux_user;groups='wheel';sudo='ALL=(ALL) ALL';lock_passwd=$false;hashed_passwd=$userPassword;shell='/bin/bash'});
         chpasswd=@{expire=$false;users=@(@{name='root';password=$rootPassword;type='hash'})};
         write_files=@(@{path='/etc/semaphore-instance.json';permissions='0644';content=($instance | ConvertTo-Json -Compress)});
         final_message='Semaphore clone initialization finished'

@@ -1,27 +1,34 @@
-Configuracion creada el 3 de noviembre de 2026 en el proyecto Santillana.
+CONFIGURACION ACTUAL DE SEMAPHORE - 3 NOVIEMBRE 2026
 
-Repositorio nuevo: Playbooks - HyperV nuevas tareas
-URL Git: https://github.com/acuetosantillana/Playbooks.git
+Repositorio: Playbooks - HyperV nuevas tareas
 Rama: codex/hyperv-semaphore-nuevas-tareas
-La referencia anterior Playbooks / main se conserva.
+Inventario: Hipervisores Windows. Grupo: Empty. Vista: Hipervisores.
 
-Tarea 23: NUEVO - Windows Server 2025 - Hyper-V HA
-https://smxsemaphore.santillana.com.mx/project/1/views/5/templates/23/tasks
-Playbook: HyperV-Semaphore/playbooks/crear_windows_2025.yml
+INSTALAR Y PUBLICAR UNA SOLA VEZ
+25 - BASE - Windows Server 2025 - instalar una vez
+https://smxsemaphore.santillana.com.mx/project/1/templates/25/tasks
+Archivo: HyperV-Semaphore/playbooks/crear_base_windows_2025.yml
+Nombre predefinido: TPL-WS2025. Plantilla: ws2025-base-v1.
+26 - BASE - Rocky Linux 9 - instalar una vez
+https://smxsemaphore.santillana.com.mx/project/1/templates/26/tasks
+Archivo: HyperV-Semaphore/playbooks/crear_base_rocky_9.yml
+Nombre predefinido: TPL-ROCKY9. Plantilla: rocky9-base-v1.
+Ambas: VLAN 120, IP temporal 10.138.120.5, prefijo inicial 24.
+Deben ejecutarse secuencialmente. Quedan por indicar gateway, DNS y secretos.
+La tarea completa solo al sellar, apagar y publicar el VHDX maestro con metadatos.
 
-Tarea 24: NUEVO - Rocky Linux 9 - Hyper-V HA
-https://smxsemaphore.santillana.com.mx/project/1/views/5/templates/24/tasks
-Playbook: HyperV-Semaphore/playbooks/crear_rocky_9.yml
+DESPLEGAR DIARIAMENTE SIN VOLVER A INSTALAR
+23 - VM desde plantilla - Windows Server 2025
+https://smxsemaphore.santillana.com.mx/project/1/templates/23/tasks
+24 - VM desde plantilla - Rocky Linux 9
+https://smxsemaphore.santillana.com.mx/project/1/templates/24/tasks
+Hipervisor: enum SMXHYPVA / SMXHYPVB.
+VLAN: enum 120 / 96.
+Plantilla: enum del sistema correspondiente.
+Se retiraron ISO, NAS e indice Windows de los formularios de clonacion.
+Cada clon requiere una IP nueva; no puede usar la IP temporal 10.138.120.5.
 
-Ambas usan el inventario Hipervisores Windows y la vista Hipervisores.
-Grupo de variables: Empty, para no heredar valores fijos de otras VM.
-No se lanzaron instalaciones. Recursos y datos de red se piden al ejecutar.
-Windows solicita vm_image_index y admin_password como secreto.
-Rocky solicita linux_user, root_password y linux_password (las dos como secretos).
-Ambas admiten nas_user y nas_pass opcionales; nas_pass es secreto.
-Estos campos van como extra-vars protegidas, compatibles con la version
-observada de Semaphore; no se rellenaron ni guardaron contrasenas por defecto.
-La cuenta y contrasena de los nodos siguen siendo las del inventario existente.
-
-Los playbooks antiguos y las tareas 11/13 no se modificaron.
-Ver LEEME.txt para requisitos del runner, permisos, ISO, arranque y limites.
+No se han instalado ni capturado las bases durante la configuracion de tareas.
+Las tareas originales 11 y 13 se consultaron para reutilizar sus enums, sin
+modificarlas. No se guardaron contrasenas por defecto en ninguna tarea nueva.
+Ver LEEME.txt para requisitos y comportamiento operativo.
