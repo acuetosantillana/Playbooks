@@ -1,0 +1,14 @@
+{
+  "hyperv_host": "SMXHYPVB",
+  "vm_name": "lab-rocky9-01",
+  "memory_gb": 4,
+  "cpu": 4,
+  "disk_gb": 100,
+  "vm_ip": "192.0.2.21",
+  "vm_mask": 24,
+  "vm_gateway": "192.0.2.1",
+  "vm_dns1": "192.0.2.10",
+  "vm_dns2": "",
+  "vm_vlan": 0,
+  "linux_user": "adm"
+}

@@ -1,0 +1,5 @@
+---
+- name: Desplegar Windows Server 2025 en Hyper-V
+  ansible.builtin.import_playbook: desplegar.yml
+  vars:
+    vm_os: Windows

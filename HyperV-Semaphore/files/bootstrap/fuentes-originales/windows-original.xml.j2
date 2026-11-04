@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend"
+          xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <!-- ====================== windowsPE ====================== -->
+  <settings pass="windowsPE">
+
+    <component name="Microsoft-Windows-International-Core-WinPE"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <UILanguage>en-US</UILanguage>
+      <SystemLocale>es-MX</SystemLocale>
+      <UserLocale>es-MX</UserLocale>
+      <InputLocale>0c0a:0000080a</InputLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>100</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <PartitionID>1</PartitionID>
+              <Order>1</Order>
+              <Format>FAT32</Format>
+              <Label>System</Label>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <PartitionID>3</PartitionID>
+              <Order>2</Order>
+              <Format>NTFS</Format>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+      </DiskConfiguration>
+
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>{{ vm_image_index }}</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <WillShowUI>Never</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <FullName>Administrator</FullName>
+        <Organization>Company</Organization>
+      </UserData>
+
+    </component>
+  </settings>
+
+  <!-- ====================== specialize ====================== -->
+  <settings pass="specialize">
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <ComputerName>{{ vm_name }}</ComputerName>
+      <TimeZone>Central Standard Time (Mexico)</TimeZone>
+    </component>
+
+    <component name="Microsoft-Windows-TerminalServices-LocalSessionManager"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <fDenyTSConnections>false</fDenyTSConnections>
+    </component>
+
+    <component name="Microsoft-Windows-TerminalServices-RDP-WinStationExtensions"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <UserAuthentication>0</UserAuthentication>
+    </component>
+
+    <component name="Networking-MPSSVC-Svc"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <FirewallGroups>
+        <FirewallGroup wcm:action="add" wcm:keyValue="RemoteDesktop">
+          <Active>true</Active>
+          <Group>Remote Desktop</Group>
+          <Profile>all</Profile>
+        </FirewallGroup>
+        <!-- Habilitar ICMP (ping) en todos los perfiles desde specialize -->
+        <FirewallGroup wcm:action="add" wcm:keyValue="ICMPv4">
+          <Active>true</Active>
+          <Group>File and Printer Sharing (Echo Request - ICMPv4-In)</Group>
+          <Profile>all</Profile>
+        </FirewallGroup>
+      </FirewallGroups>
+    </component>
+
+  </settings>
+
+  <!-- ====================== oobeSystem ====================== -->
+  <settings pass="oobeSystem">
+
+    <component name="Microsoft-Windows-International-Core"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+      <SystemLocale>es-MX</SystemLocale>
+      <UserLocale>es-MX</UserLocale>
+      <UILanguage>en-US</UILanguage>
+      <InputLocale>0c0a:0000080a</InputLocale>
+    </component>
+
+    <component name="Microsoft-Windows-Shell-Setup"
+               processorArchitecture="amd64"
+               publicKeyToken="31bf3856ad364e35"
+               language="neutral"
+               versionScope="nonSxS">
+
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>{{ admin_password }}</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+
+      <AutoLogon>
+        <Username>Administrator</Username>
+        <Enabled>true</Enabled>
+        <LogonCount>1</LogonCount>
+        <Password>
+          <Value>{{ admin_password }}</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <SkipUserOOBE>true</SkipUserOOBE>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+      </OOBE>
+
+      <FirstLogonCommands>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Configure static IPv4 network</Description>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "try { New-NetIPAddress -InterfaceAlias 'Ethernet' -IPAddress '{{ vm_ip }}' -PrefixLength {{ vm_mask }} -DefaultGateway '{{ vm_gateway }}' -AddressFamily IPv4 -ErrorAction Stop; Set-DnsClientServerAddress -InterfaceAlias 'Ethernet' -ServerAddresses '{{ vm_dns1 }}','{{ vm_dns2 }}' -ErrorAction Stop; 'OK' | Out-File -FilePath 'C:\netcfg.log' -Encoding utf8 } catch { $_.Exception.Message | Out-File -FilePath 'C:\netcfg.log' -Encoding utf8 }"</CommandLine>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Description>Enable ICMP ping (ICMPv4-In) all profiles</Description>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "Enable-NetFirewallRule -Name 'FPS-ICMP4-ERQ-In' -ErrorAction SilentlyContinue; netsh advfirewall firewall set rule name='File and Printer Sharing (Echo Request - ICMPv4-In)' new enable=yes profile=any"</CommandLine>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Description>Enable and configure WinRM</Description>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "Enable-PSRemoting -Force -SkipNetworkProfileCheck; Set-Service WinRM -StartupType Automatic; Start-Service WinRM; winrm set winrm/config/service '@{AllowUnencrypted=&quot;true&quot;}'; winrm set winrm/config/service/auth '@{Basic=&quot;true&quot;}'; netsh advfirewall firewall add rule name='WinRM HTTP 5985' dir=in action=allow protocol=TCP localport=5985"</CommandLine>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Description>Change RDP port to 4502</Description>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name PortNumber -Value 4502"</CommandLine>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>5</Order>
+          <Description>Add firewall rule for RDP on port 4502</Description>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "New-NetFirewallRule -DisplayName 'Remote Desktop - Custom Port 4502' -Direction Inbound -Protocol TCP -LocalPort 4502 -Action Allow"</CommandLine>
+        </SynchronousCommand>
+
+        <SynchronousCommand wcm:action="add">
+          <Order>6</Order>
+          <Description>Restart Terminal Services</Description>
+          <CommandLine>powershell.exe -ExecutionPolicy Bypass -Command "Restart-Service TermService -Force"</CommandLine>
+        </SynchronousCommand>
+
+      </FirstLogonCommands>
+
+    </component>
+
+  </settings>
+
+</unattend>

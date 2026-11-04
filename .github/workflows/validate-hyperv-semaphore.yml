@@ -1,0 +1,33 @@
+name: Validar nuevos despliegues Hyper-V
+on:
+  push:
+    paths: ['HyperV-Semaphore/**', 'collections/requirements.yml', '.github/workflows/validate-hyperv-semaphore.yml']
+  pull_request:
+    paths: ['HyperV-Semaphore/**', 'collections/requirements.yml', '.github/workflows/validate-hyperv-semaphore.yml']
+permissions:
+  contents: read
+jobs:
+  yaml-kickstart-ansible:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Instalar validadores del controlador
+        run: pip install -r HyperV-Semaphore/requirements-runner.txt PyYAML Jinja2 pykickstart
+      - name: Instalar coleccion Windows
+        run: ansible-galaxy collection install -r HyperV-Semaphore/requirements.yml
+      - name: Validar YAML, Jinja y Kickstart RHEL9
+        run: python HyperV-Semaphore/tests/validar_archivos.py
+      - name: Comprobar sintaxis de ambos playbooks sin conectar al cluster
+        run: |
+          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/crear_windows_2025.yml -e @HyperV-Semaphore/examples/windows-extra-vars.json
+          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/crear_rocky_9.yml -e @HyperV-Semaphore/examples/rocky-extra-vars.json
+  powershell-generation:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verificar generacion desatendida con datos ficticios
+        shell: pwsh
+        run: ./HyperV-Semaphore/tests/Verificar-Generacion.ps1
