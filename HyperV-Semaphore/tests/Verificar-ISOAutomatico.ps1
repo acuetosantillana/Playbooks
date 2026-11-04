@@ -23,6 +23,8 @@ function Start-Process {
     param($FilePath,$ArgumentList,[switch]$NoNewWindow,[switch]$Wait,[switch]$PassThru,$RedirectStandardOutput,$RedirectStandardError)
     if (-not $Wait -or -not $PassThru -or -not $RedirectStandardOutput -or -not $RedirectStandardError) { throw 'Falta esperar el proceso y aislar sus dos salidas.' }
     $decoded=@($ArgumentList | ForEach-Object { $_.Substring(1,$_.Length-2) })
+    $embedded=Join-Path $decoded[-2] 'Autounattend.xml'
+    $global:hvAutoTestState.EmbeddedAnswer=if (Test-Path -LiteralPath $embedded) { Get-Content -LiteralPath $embedded -Raw } else { '' }
     $decoded | ConvertTo-Json | Set-Content -LiteralPath ($decoded[-1]+'.args.json')
     Set-Content -LiteralPath $decoded[-1] -Value 'TEST GENERATED ISO'
     Set-Content -LiteralPath $RedirectStandardOutput -Value 'TEST STDOUT'
@@ -41,7 +43,7 @@ function Get-ChildItem {
 }
 $builder=Join-Path $projectRoot 'scripts\Crear-ISOWindowsSinTecla.ps1'
 function Invoke-FixtureBuild {
-    param([string]$Case,[bool]$AlreadyMounted=$false,[int]$ExitCode=0,[string]$Boot=$bootFile)
+    param([string]$Case,[bool]$AlreadyMounted=$false,[int]$ExitCode=0,[string]$Boot=$bootFile,[switch]$WithAnswers)
     $global:hvAutoTestState.AlreadyMounted=$AlreadyMounted
     $global:hvAutoTestState.MountCount=0
     $global:hvAutoTestState.DismountCount=0
@@ -52,7 +54,18 @@ function Invoke-FixtureBuild {
     $original=Join-Path $caseRoot 'Media\os.iso'
     Set-Content -LiteralPath $original -Value 'ORIGINAL ISO FIXTURE'
     $originalHash=(Get-FileHash -LiteralPath $original).Hash
-    & $builder -Root $caseRoot -VmName ('TPL-'+$Case) -CsvVolumes @($testRoot) -OscdimgPath $fakeOscdimg -NoPromptBootFile $Boot
+    $extra=@{}
+    if ($WithAnswers) {
+        $answerDir=Join-Path $caseRoot 'Provisioning\answers'
+        New-Item -ItemType Directory -Path $answerDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $answerDir 'Autounattend.xml') -Value '<unattend>TEST ONLY</unattend>'
+        $extra.AnswersPath=$answerDir
+    }
+    & $builder -Root $caseRoot -VmName ('TPL-'+$Case) -CsvVolumes @($testRoot) -OscdimgPath $fakeOscdimg -NoPromptBootFile $Boot @extra
+    if ($WithAnswers) {
+        if ($global:hvAutoTestState.EmbeddedAnswer.Trim() -ne '<unattend>TEST ONLY</unattend>' -or -not $script:Ansible.Result.embedded_autounattend) { throw 'El medio de arranque no recibio Autounattend.xml en su raiz.' }
+        if (-not (Get-Acl -LiteralPath (Join-Path $caseRoot 'Media')).AreAccessRulesProtected) { throw 'La ISO con respuestas hereda permisos generales.' }
+    }
     $recorded=Get-Content -LiteralPath (Join-Path $caseRoot 'Media\os-uefi-auto.iso.partial.args.json') -Raw | ConvertFrom-Json
     if (('-bootdata:1#pEF,e,b'+$Boot) -notin $recorded -or '-u2' -notin $recorded) { throw 'No se selecciono la imagen UEFI sin prompt.' }
     if ((Get-FileHash -LiteralPath $original).Hash -ne $originalHash) { throw 'Se modifico la ISO original.' }
@@ -63,6 +76,7 @@ Invoke-FixtureBuild -Case Normal
 if ($global:hvAutoTestState.MountCount -ne 1 -or $global:hvAutoTestState.DismountCount -ne 1) { throw 'No se libero el montaje propio.' }
 Invoke-FixtureBuild -Case PreMounted -AlreadyMounted $true
 if ($global:hvAutoTestState.MountCount -ne 0 -or $global:hvAutoTestState.DismountCount -ne 0) { throw 'Se altero un montaje ajeno.' }
+Invoke-FixtureBuild -Case Embedded -WithAnswers
 $missingRejected=$false
 try { Invoke-FixtureBuild -Case Missing -Boot (Join-Path $testRoot 'missing\efisys_noprompt.bin') } catch { $missingRejected=$_.Exception.Message -match 'no existe' }
 if (-not $missingRejected -or $global:hvAutoTestState.DismountCount -ne 1) { throw 'Archivo ausente no produce error con liberacion de montaje.' }

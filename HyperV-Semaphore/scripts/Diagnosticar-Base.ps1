@@ -25,6 +25,9 @@ foreach ($node in $ClusterNodes) {
     Add-Probe ('switches_'+$node) { Get-VMSwitch -ComputerName $node -ErrorAction Stop | Select-Object Name,SwitchType }
     Add-Probe ('switch_solicitado_'+$node) { Get-VMSwitch -ComputerName $node -Name $SwitchName -ErrorAction Stop | Select-Object Name }
     Add-Probe ('vm_existente_'+$node) { Get-VM -ComputerName $node -ErrorAction Stop | Where-Object Name -eq $VmName | Select-Object Name,State,Id }
+    Add-Probe ('DVD_conectados_'+$node) {
+        Get-VM -ComputerName $node -ErrorAction Stop | Where-Object Name -eq $VmName | Get-VMDvdDrive | Select-Object Path,ControllerNumber,ControllerLocation
+    }
 }
 Add-Probe 'CSV_online_y_espacio' {
     Get-ClusterSharedVolume | ForEach-Object { foreach ($volume in $_.SharedVolumeInfo) {
@@ -62,6 +65,21 @@ Add-Probe 'carpetas_de_preparacion_existentes' {
         if (Test-Path -LiteralPath $root) {
             [pscustomobject]@{path=$root;has_manifest=(Test-Path -LiteralPath (Join-Path $root 'deployment.json'));files=@(Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction Stop | Select-Object -First 15 FullName,Length)}
         }
+    }
+}
+$answerMedia=@($CsvVolumes | ForEach-Object { Join-Path (Join-Path (Join-Path $_ 'SemaphoreVMs') $VmName) 'Media\answers.iso' } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+foreach ($answerIso in $answerMedia) {
+    Add-Probe ('contenido_medio_respuestas_'+$answerIso) {
+        $mountedHere=$false
+        try {
+            $image=Get-DiskImage -ImagePath $answerIso -ErrorAction Stop
+            if (-not $image.Attached) { $image=Mount-DiskImage -ImagePath $answerIso -Access ReadOnly -PassThru -ErrorAction Stop; $mountedHere=$true }
+            foreach ($volume in @($image | Get-Volume | Where-Object DriveLetter)) {
+                $driveRoot=$volume.DriveLetter+':\'
+                # Solo nombres y validez XML. Nunca mostrar su contenido/secretos.
+                [pscustomobject]@{label=$volume.FileSystemLabel;root_files=@(Get-ChildItem -LiteralPath $driveRoot -File | Select-Object -ExpandProperty Name);autounattend_present=(Test-Path -LiteralPath (Join-Path $driveRoot 'Autounattend.xml'))}
+            }
+        } finally { if ($mountedHere) { Dismount-DiskImage -ImagePath $answerIso | Out-Null } }
     }
 }
 $Ansible.Result=@{executor=$env:COMPUTERNAME;identity=[Security.Principal.WindowsIdentity]::GetCurrent().Name;switch_requested=$SwitchName;vm=$VmName;checks=$checks.ToArray();read_only=$true}

@@ -72,19 +72,6 @@
       # sensitive_parameters oculta la contrasena; dejar visibles los errores
       # de permisos, switches, rutas y capacidad sin censurar todo el resultado.
 
-    - name: Preparar arranque UEFI Windows sin pulsar una tecla
-      ansible.windows.win_powershell:
-        path: "{{ playbook_dir }}/../scripts/Crear-ISOWindowsSinTecla.ps1"
-        error_action: stop
-        parameters:
-          Root: "{{ deployment.result.root }}"
-          VmName: "{{ vm_name }}"
-          CsvVolumes: "{{ csv_volumes }}"
-          OscdimgPath: "{{ oscdimg_path }}"
-          NoPromptBootFile: "{{ efisys_noprompt_path }}"
-      register: windows_no_prompt
-      when: vm_os == 'Windows' and windows_automatic_boot | bool
-
     - name: Copiar generador y plantillas al directorio restringido
       ansible.windows.win_copy:
         src: "{{ playbook_dir }}/../files/bootstrap/"
@@ -124,6 +111,20 @@
             value: "{{ linux_password | password_hash('sha512') }}"
       when: vm_os == 'Rocky'
       no_log: true
+
+    - name: Integrar respuestas en la ISO UEFI Windows sin pulsar una tecla
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Crear-ISOWindowsSinTecla.ps1"
+        error_action: stop
+        parameters:
+          Root: "{{ deployment.result.root }}"
+          VmName: "{{ vm_name }}"
+          CsvVolumes: "{{ csv_volumes }}"
+          OscdimgPath: "{{ oscdimg_path }}"
+          NoPromptBootFile: "{{ efisys_noprompt_path }}"
+          AnswersPath: "{{ deployment.result.stage }}\\answers"
+      register: windows_no_prompt
+      when: vm_os == 'Windows' and windows_automatic_boot | bool
 
     - name: Crear medios, VM y rol HA; iniciar instalacion
       ansible.windows.win_powershell:

@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory)][string]$VmName,
     [Parameter(Mandatory)][string[]]$CsvVolumes,
     [Parameter(Mandatory)][string]$OscdimgPath,
-    [string]$NoPromptBootFile=''
+    [string]$NoPromptBootFile='',
+    [string]$AnswersPath=''
 )
 $ErrorActionPreference='Stop'
 $Ansible.Changed=$false
@@ -14,6 +15,22 @@ $sourceIso=Join-Path $rootPath 'Media\os.iso'
 $outputIso=Join-Path $rootPath 'Media\os-uefi-auto.iso'
 $partialIso=$outputIso+'.partial'
 $work=Join-Path $rootPath 'Provisioning\windows-media'
+if ($AnswersPath) {
+    $expectedAnswers=Join-Path $rootPath 'Provisioning\answers'
+    if ([IO.Path]::GetFullPath($AnswersPath).TrimEnd('\') -ne $expectedAnswers) { throw 'Respuestas fuera del directorio restringido de esta VM.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $AnswersPath 'Autounattend.xml') -PathType Leaf)) { throw 'Falta Autounattend.xml para integrar en el medio de arranque.' }
+    # La ISO ahora contiene la contrasena de instalacion. Proteger el directorio
+    # antes de que Oscdimg cree siquiera el archivo parcial.
+    $mediaPath=Join-Path $rootPath 'Media'
+    $acl=Get-Acl -LiteralPath $mediaPath
+    $acl.SetAccessRuleProtection($true,$false)
+    $inherit=[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
+    foreach ($identity in @('S-1-5-18','S-1-5-32-544',[Security.Principal.WindowsIdentity]::GetCurrent().User.Value)) {
+        $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($identity),'FullControl',$inherit,'None','Allow'))
+    }
+    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-83-0'),'ReadAndExecute',$inherit,'None','Allow'))
+    Set-Acl -LiteralPath $mediaPath -AclObject $acl
+}
 if (-not (Test-Path -LiteralPath $OscdimgPath -PathType Leaf)) { throw 'Falta oscdimg.exe de Microsoft ADK.' }
 if (-not (Test-Path -LiteralPath $sourceIso -PathType Leaf)) { throw 'No se encontro la copia de ISO en el CSV.' }
 foreach ($path in @($outputIso,$partialIso,$work)) { if (Test-Path -LiteralPath $path) { throw 'Ya existe una preparacion de ISO. Revisar antes de reintentar; no se sobrescribe.' } }
@@ -44,6 +61,12 @@ try {
     if ((Get-Item -LiteralPath $bootFile).Length -eq 0) { throw 'El archivo de arranque esta vacio.' }
     New-Item -ItemType Directory -Path $work -ErrorAction Stop | Out-Null
     Get-ChildItem -LiteralPath $mountedRoot -Force | Copy-Item -Destination $work -Recurse -Force
+    if ($AnswersPath) {
+        $embeddedAnswer=Join-Path $work 'Autounattend.xml'
+        if (Test-Path -LiteralPath $embeddedAnswer) { (Get-Item -LiteralPath $embeddedAnswer).IsReadOnly=$false }
+        Copy-Item -LiteralPath (Join-Path $AnswersPath 'Autounattend.xml') -Destination $embeddedAnswer -Force
+        if ((Get-FileHash -LiteralPath $embeddedAnswer).Hash -ne (Get-FileHash -LiteralPath (Join-Path $AnswersPath 'Autounattend.xml')).Hash) { throw 'No se verifico la integracion del archivo de respuestas.' }
+    }
     # Una entrada El Torito UEFI para Hyper-V Gen2; conserva Secure Boot.
     $arguments=@('-m','-o','-u2','-udfver102','-lWS2025AUTO',('-bootdata:1#pEF,e,b'+$bootFile),$work,$partialIso)
     # Oscdimg escribe progreso en stderr incluso cuando termina correctamente.
@@ -58,7 +81,7 @@ try {
     }
     if (-not (Test-Path -LiteralPath $partialIso -PathType Leaf) -or (Get-Item -LiteralPath $partialIso).Length -eq 0) { throw 'Oscdimg no produjo una ISO utilizable.' }
     Move-Item -LiteralPath $partialIso -Destination $outputIso
-    $audit=@{uefi_no_prompt=$true;source_iso=$sourceIso;boot_image=$bootFile;boot_sha256=(Get-FileHash -LiteralPath $bootFile -Algorithm SHA256).Hash;created_utc=[DateTime]::UtcNow.ToString('o')}
+    $audit=@{uefi_no_prompt=$true;embedded_autounattend=[bool]$AnswersPath;source_iso=$sourceIso;boot_image=$bootFile;boot_sha256=(Get-FileHash -LiteralPath $bootFile -Algorithm SHA256).Hash;created_utc=[DateTime]::UtcNow.ToString('o')}
     $audit | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $rootPath 'Media\os-uefi-auto.json') -Encoding UTF8
 } finally {
     if ($mountedByThisScript) { Dismount-DiskImage -ImagePath $sourceIso | Out-Null }
@@ -67,5 +90,5 @@ try {
 $resolvedWork=[IO.Path]::GetFullPath($work)
 if ($resolvedWork -ne (Join-Path $rootPath 'Provisioning\windows-media')) { throw 'Ruta de trabajo fuera de la carpeta autorizada.' }
 Remove-Item -LiteralPath $resolvedWork -Recurse -Force
-$Ansible.Result=@{iso=$outputIso;uefi_no_prompt=$true}
+$Ansible.Result=@{iso=$outputIso;uefi_no_prompt=$true;embedded_autounattend=[bool]$AnswersPath}
 $Ansible.Changed=$true

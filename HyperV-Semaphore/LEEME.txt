@@ -123,6 +123,10 @@ REQUISITOS DEL RUNNER Y HOSTS
 - Copias completas en CSV; se necesita espacio para el disco solicitado y reserva.
 
 ERRORES Y PROTECCIONES
+La ISO Windows UEFI incluye Autounattend.xml en su raiz. Se genera despues de
+las respuestas y antes de arrancar la VM; el DVD HVCONFIG conserva el script
+de configuracion. Media tiene permisos restringidos porque el archivo contiene
+la contrasena de instalacion. Ambos medios se retiran tras verificar el invitado.
 Para tomar correcciones nuevas usa RUN en la cabecera de la tarea BASE. Repetir
 una ejecucion historica puede fijar su commit anterior: el log muestra
 "Checkout repository to <hash>". Descargar la rama no significa que se use
