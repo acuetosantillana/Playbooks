@@ -1,9 +1,11 @@
 """Comprobar seleccion excluyente de acciones y menu Install de Rocky."""
 import importlib.util
+import sys
 from pathlib import Path
 import yaml
 
 root=Path(__file__).resolve().parents[1]
+sys.dont_write_bytecode=True
 spec=importlib.util.spec_from_file_location('rocky_iso',root/'scripts/preparar_rocky_iso.py')
 module=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

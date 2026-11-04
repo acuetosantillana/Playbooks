@@ -1,53 +1,31 @@
-CONFIGURACION ACTUAL DE SEMAPHORE - 3 NOVIEMBRE 2026
+CONFIGURACION UNIFICADA DE SEMAPHORE
 
+Tarea 25: Hyper-V - Windows y Rocky - flujo unico
+https://smxsemaphore.santillana.com.mx/project/1/templates/25/tasks
+Unico playbook: HyperV-Semaphore/playbooks/hyperv.yml
 Repositorio: Playbooks - HyperV nuevas tareas
 Rama: codex/hyperv-semaphore-nuevas-tareas
-Inventario: Hipervisores Windows. Vista: Hipervisores.
-Grupos BASE: Variables-VM - Windows (25) y Variables VM - Linux (26).
-Las tareas diarias de clones (23/24) conservan Empty.
-Las BASE leen iso_path, iso_user e iso_password de esos grupos directamente;
-se retiraron sus campos de encuesta duplicados de ISO/NAS.
+Inventario: Hipervisores Windows. Grupo: Variables-VM - Windows.
 
-INSTALAR Y PUBLICAR UNA SOLA VEZ
-25 - BASE - Windows Server 2025 - instalar una vez
-https://smxsemaphore.santillana.com.mx/project/1/templates/25/tasks
-Archivo: HyperV-Semaphore/playbooks/crear_base_windows_2025.yml
-Nombre predefinido: TPL-WS2025. Plantilla: ws2025-base-v1.
-26 - BASE - Rocky Linux 9 - instalar una vez
-https://smxsemaphore.santillana.com.mx/project/1/templates/26/tasks
-Archivo: HyperV-Semaphore/playbooks/crear_base_rocky_9.yml
-Nombre predefinido: TPL-ROCKY9. Plantilla: rocky9-base-v1.
-Ambas: VLAN 120, IP temporal 10.138.120.5, prefijo inicial 24.
-Deben ejecutarse secuencialmente. Quedan por indicar gateway, DNS y secretos.
-La tarea completa solo al sellar, apagar y publicar el VHDX maestro con metadatos.
+Sistema operativo: Windows / Rocky.
+Operacion: crear_base / clonar / diagnosticar.
+Hipervisor: SMXHYPVA / SMXHYPVB. VLAN: 120 / 96.
+Nombre e IP vacios: base del sistema y 10.138.120.5.
+Clones: indicar nombre e IP propios.
+Windows: contrasena administrador. Rocky: root y usuario adm.
+ISO alternativa opcional; credenciales NAS del grupo existente.
+Idioma Windows actual: en-US. Administrador integrado: Administrator.
 
-DESPLEGAR DIARIAMENTE SIN VOLVER A INSTALAR
-23 - VM desde plantilla - Windows Server 2025
-https://smxsemaphore.santillana.com.mx/project/1/templates/23/tasks
-24 - VM desde plantilla - Rocky Linux 9
-https://smxsemaphore.santillana.com.mx/project/1/templates/24/tasks
-Hipervisor: enum SMXHYPVA / SMXHYPVB.
-VLAN: enum 120 / 96.
-Plantilla: enum del sistema correspondiente.
-Se retiraron ISO, NAS e indice Windows de los formularios de clonacion.
-Cada clon requiere una IP nueva; no puede usar la IP temporal 10.138.120.5.
+crear_base incluye instalacion, verificacion, sellado, apagado y captura.
+Windows: respuestas integradas en ISO UEFI sin tecla.
+Rocky: Install predeterminado, timeout 3 segundos y Kickstart integrado.
+Rocky requiere mkksiso y xorriso en runner Linux x86_64 con root para UEFI.
+Se verifica este requisito antes de reservar IP o crear carpetas.
 
-No se han instalado ni capturado las bases durante la configuracion de tareas.
-27 - DIAGNOSTICO - Base Windows Hyper-V (grupo Windows)
-Archivo: HyperV-Semaphore/playbooks/diagnosticar_base.yml
-Ejecucion 565 correcta: ISO accesible con las variables del grupo, nodos y CSV
-disponibles. No crea VM.
-28 - RECUPERAR - Bloqueo base sin VM (grupo Empty)
-Archivo: HyperV-Semaphore/playbooks/recuperar_bloqueo_base.yml
-Ejecucion 566 correcta: reserva del intento 564 archivada en .locks/.history.
-Solo admite recuperar con fecha exacta, sin VM, rol, carpetas ni respuesta IP.
-Revisar y cambiar los datos del intento antes de reutilizar esta recuperacion.
-Las tareas originales 11 y 13 se consultaron para reutilizar sus enums, sin
-modificarlas. No se guardaron contrasenas por defecto en ninguna tarea nueva.
-Ver LEEME.txt para requisitos y comportamiento operativo.
+Las tareas 23,24,26,27,28,29 se marcaron ARCHIVO - usar flujo unico 25.
+Sus registros se conservan; los playbooks separados se retiraron de la rama.
+Las tareas originales 11 y 13 y Windows/ y Linux/ se conservan.
 
-29 - LIMPIAR - TPL-WS2025 - intento autorizado (grupo Empty)
-Archivo: HyperV-Semaphore/playbooks/limpiar_base_windows.yml
-Solo TPL-WS2025. Exige UUID exacto, Root CSV exacto y fecha de reserva.
-cleanup_apply=false valida sin cambios; true elimina VM, rol, disco y carpeta.
-No usar sobre una VM o instalacion nueva sin autorizacion expresa de borrado.
+No se han capturado aun las bases. Usar RUN en cabecera de tarea 25 para tomar
+la revision actual, en lugar de repetir ejecuciones fijadas a commits antiguos.
+Ver LEEME.txt para requisitos y mantenimiento mediante el mismo archivo.
