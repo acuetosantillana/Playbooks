@@ -20,15 +20,13 @@ jobs:
         run: ansible-galaxy collection install -r HyperV-Semaphore/requirements.yml
       - name: Validar YAML, Jinja y Kickstart RHEL9
         run: python HyperV-Semaphore/tests/validar_archivos.py
-      - name: Comprobar sintaxis de ambos playbooks sin conectar al cluster
+      - name: Validar flujo unico y menu Install de Rocky
+        run: python HyperV-Semaphore/tests/test_flujo_unificado.py
+      - name: Comprobar el playbook unico para ambos sistemas sin conectar al cluster
         run: |
-          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/crear_windows_2025.yml -e @HyperV-Semaphore/examples/windows-extra-vars.json
-          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/crear_rocky_9.yml -e @HyperV-Semaphore/examples/rocky-extra-vars.json
-          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/crear_base_windows_2025.yml -e hyperv_host=SMXHYPVA
-          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/crear_base_rocky_9.yml -e hyperv_host=SMXHYPVB
-          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/diagnosticar_base.yml -e hyperv_host=SMXHYPVA
-          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/recuperar_bloqueo_base.yml -e hyperv_host=SMXHYPVA
-          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/limpiar_base_windows.yml -e hyperv_host=SMXHYPVA
+          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/hyperv.yml -e hyperv_host=SMXHYPVA -e vm_os=Windows -e accion=crear_base
+          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/hyperv.yml -e hyperv_host=SMXHYPVB -e vm_os=Rocky -e accion=crear_base
+          ansible-playbook --syntax-check -i HyperV-Semaphore/examples/inventory.yml HyperV-Semaphore/playbooks/hyperv.yml -e hyperv_host=SMXHYPVA -e accion=diagnosticar
           bash -n HyperV-Semaphore/files/sellar-rocky.sh
   powershell-generation:
     runs-on: windows-latest

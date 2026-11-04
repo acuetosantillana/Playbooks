@@ -1,6 +1,0 @@
----
-- name: Desplegar Windows Server 2025 en Hyper-V
-  ansible.builtin.import_playbook: desplegar_desde_plantilla.yml
-  vars:
-    vm_os: Windows
-    template_id: ws2025-base-v1

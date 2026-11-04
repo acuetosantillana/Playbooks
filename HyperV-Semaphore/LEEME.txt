@@ -3,20 +3,31 @@ PLANTILLAS REUTILIZABLES HYPER-V / SEMAPHORE
 El flujo de uso diario copia una imagen ya instalada. No vuelve a ejecutar
 Windows Setup ni Anaconda en cada VM.
 
-DOS PASOS
-1. BASE - Windows Server 2025 - instalar una vez:
-   playbooks/crear_base_windows_2025.yml
-2. BASE - Rocky Linux 9 - instalar una vez:
-   playbooks/crear_base_rocky_9.yml
-Estas tareas instalan una VM dedicada, verifican el acceso, limpian su identidad,
-la apagan y publican una copia de su VHDX como version maestra.
+UN PLAYBOOK Y UNA TAREA
+Archivo: playbooks/hyperv.yml. Tarea Semaphore 25:
+Hyper-V - Windows y Rocky - flujo unico.
+Seleccionar Sistema operativo (Windows/Rocky) y Operacion:
+- crear_base: instala, verifica, sella, apaga y publica el VHDX maestro.
+- clonar: copia la base publicada, personaliza y verifica la VM nueva.
+- diagnosticar: consulta requisitos y estado sin crear VM.
+El archivo contiene tambien recuperar_reserva y limpiar para mantenimiento
+expresamente autorizado mediante extra-vars. No hay import_playbook.
+Los scripts y plantillas de respuestas son auxiliares del mismo flujo.
 
-Para crear VM nuevas despues:
-- VM desde plantilla - Windows Server 2025: playbooks/crear_windows_2025.yml
-- VM desde plantilla - Rocky Linux 9: playbooks/crear_rocky_9.yml
-Estas tareas verifican la imagen maestra, hacen copia completa, personalizan el
-invitado y registran su nueva identidad de VM en el cluster. Cada disco es
-independiente. No necesita la ISO del sistema operativo, ni una clave de indice.
+Windows incluye Autounattend.xml en la ISO UEFI. La ISO actual es en-US y su
+administrador integrado es Administrator; cambiar ambos campos para otra ISO.
+Rocky genera una ISO mediante mkksiso: selecciona Install (entrada 0), espera
+3 segundos y aplica el KS integrado. Requiere runner Linux x86_64 con mkksiso,
+xorriso y root para actualizar efiboot; se valida antes de reservar IP.
+El runner necesita espacio temporal para dos ISO completas. La copia original
+del NAS se conserva. Las ISO personalizadas contienen secretos/hashes y se
+retiran tras verificar el invitado.
+La tarea reutiliza credenciales NAS del grupo Windows para el recurso SMB.
+Para Rocky se usa rocky_iso_path o la ruta por defecto de cluster.yml; el campo
+ISO alternativa permite indicar la ruta exacta sin tocar el archivo.
+nombre_vm y direccion_ip vacios eligen nombre de base segun OS e IP temporal.
+Para clonar indica nombre e IP nuevos. Cada disco es independiente y no usa
+una ISO de instalacion.
 
 OPCIONES CONFIRMADAS DEL ENTORNO
 Hipervisor: SMXHYPVA o SMXHYPVB (Enum).
