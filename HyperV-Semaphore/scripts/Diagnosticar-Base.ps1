@@ -6,7 +6,8 @@ param(
     [string]$IsoPath,
     [string]$OscdimgPath,
     [string]$Library,
-    [string]$BaseIP
+    [string]$BaseIP,
+    [PSCredential]$NasCredential
 )
 $ErrorActionPreference='Stop'
 $Ansible.Changed=$false
@@ -30,7 +31,22 @@ Add-Probe 'CSV_online_y_espacio' {
         [pscustomobject]@{state=$_.State.ToString();path=$volume.FriendlyVolumeName;free_gib=[math]::Round($volume.Partition.FreeSpace/1GB,2);allowed=($volume.FriendlyVolumeName.TrimEnd('\') -in $CsvVolumes)}
     } }
 }
-Add-Probe 'ISO_con_identidad_de_la_sesion' { Get-Item -LiteralPath $IsoPath -ErrorAction Stop | Select-Object FullName,Length }
+Add-Probe 'ISO_con_acceso_configurado' {
+    $drive=$null
+    try {
+        $sourcePath=$IsoPath
+        if ($NasCredential) {
+            if ($IsoPath -notmatch '^\\\\([^\\]+)\\([^\\]+)\\(.+)$') { throw 'iso_path debe ser una ruta UNC completa.' }
+            $shareRoot='\\'+$Matches[1]+'\'+$Matches[2]
+            $relativePath=$Matches[3]
+            $driveName='DIAG'+[guid]::NewGuid().ToString('N').Substring(0,8)
+            $drive=New-PSDrive -Name $driveName -PSProvider FileSystem -Root $shareRoot -Credential $NasCredential -Scope Script
+            $sourcePath=$driveName+':\'+$relativePath
+        }
+        $file=Get-Item -LiteralPath $sourcePath -ErrorAction Stop
+        [pscustomobject]@{path=$IsoPath;bytes=$file.Length;protected_credential_used=($null -ne $NasCredential)}
+    } finally { if ($drive) { Remove-PSDrive -Name $drive.Name -Force } }
+}
 Add-Probe 'archivo_arranque_automatico_en_host' {
     $paths=@((Join-Path (Split-Path -Parent $OscdimgPath) 'efisys_noprompt.bin'))
     if (${env:ProgramFiles(x86)}) { $paths+=Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\efisys_noprompt.bin' }

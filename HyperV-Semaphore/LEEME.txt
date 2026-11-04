@@ -112,12 +112,21 @@ REQUISITOS DEL RUNNER Y HOSTS
 - Ambos nodos Up, switch presente en ambos, CSV disponibles y espacio suficiente.
 - La instalacion inicial copia la ISO del NAS al CSV; usa credenciales NAS
   opcionales por sesion, sin mappings SMB globales persistentes.
+- Las tareas BASE toman iso_path, iso_user e iso_password directamente del grupo
+  existente de su sistema (Variables-VM - Windows / Variables VM - Linux).
+  No tienen campos de encuesta duplicados para la ISO o credenciales NAS.
+  iso_user/iso_password se adaptan a nas_user/nas_pass al invocar PowerShell,
+  con password protegido mediante sensitive_parameters. Las tareas de clones
+  conservan Empty porque no acceden al NAS ni necesitan la ISO del instalador.
 - Los secretos de encuesta pueden ser admin_password, root_password,
   linux_password y nas_pass. Tambien se admiten secretos de entorno HV_*.
 - Copias completas en CSV; se necesita espacio para el disco solicitado y reserva.
 
 ERRORES Y PROTECCIONES
 No se apagan, sobrescriben ni actualizan VM existentes. Un nombre repetido falla.
+diagnosticar_base.yml revisa sin crear VM los nodos, switches, CSV, ISO y bloqueo
+de la IP. El paso de preparacion muestra errores y fases; solo se oculta el
+valor de la contrasena, en lugar de censurar todo el resultado con no_log.
 No se hace rollback que borre discos ante errores. Se conservan recursos para
 revisar y recuperar; los medios pueden contener contrasenas/hashes.
 La captura solo admite una base dedicada TPL- recien creada por este proceso,

@@ -21,6 +21,7 @@
           OscdimgPath: "{{ oscdimg_path }}"
           Library: "{{ template_library }}"
           BaseIP: "{{ base_install_ip }}"
+        sensitive_parameters: "{{ [{'name': 'NasCredential', 'username': nas_user, 'password': nas_pass}] if nas_user | length > 0 else [] }}"
       register: base_diagnostics
     - name: Mostrar causas comprobadas sin contrasenas
       ansible.builtin.debug:

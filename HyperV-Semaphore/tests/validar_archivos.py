@@ -26,6 +26,10 @@ def mapping(loader, node, deep=False):
 
 UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
 env = Environment()
+cluster_config = yaml.safe_load((root / 'config/cluster.yml').read_text())
+assert env.from_string(cluster_config['nas_user']).render(iso_user='test-share-user', lookup=lambda *args: 'fallback') == 'test-share-user'
+assert env.from_string(cluster_config['nas_pass']).render(iso_password='FAKE-ONLY-FOR-TEST', lookup=lambda *args: 'fallback') == 'FAKE-ONLY-FOR-TEST'
+assert env.from_string(cluster_config['nas_pass']).render(lookup=lambda *args: 'fallback') == 'fallback'
 assert yaml.safe_load((root.parent / 'collections/requirements.yml').read_text()) == yaml.safe_load((root / 'requirements.yml').read_text())
 
 

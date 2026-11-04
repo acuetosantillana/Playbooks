@@ -2,7 +2,11 @@ CONFIGURACION ACTUAL DE SEMAPHORE - 3 NOVIEMBRE 2026
 
 Repositorio: Playbooks - HyperV nuevas tareas
 Rama: codex/hyperv-semaphore-nuevas-tareas
-Inventario: Hipervisores Windows. Grupo: Empty. Vista: Hipervisores.
+Inventario: Hipervisores Windows. Vista: Hipervisores.
+Grupos BASE: Variables-VM - Windows (25) y Variables VM - Linux (26).
+Las tareas diarias de clones (23/24) conservan Empty.
+Las BASE leen iso_path, iso_user e iso_password de esos grupos directamente;
+se retiraron sus campos de encuesta duplicados de ISO/NAS.
 
 INSTALAR Y PUBLICAR UNA SOLA VEZ
 25 - BASE - Windows Server 2025 - instalar una vez

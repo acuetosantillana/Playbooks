@@ -25,8 +25,8 @@ reserve_gb: 10
 install_timeout: 3600
 # Los secretos pueden venir del grupo de variables de Semaphore como entorno.
 # Tambien se aceptan extra-vars/Vault con estos nombres, sin guardarlos en Git.
-nas_user: "{{ lookup('ansible.builtin.env', 'HV_NAS_USER') }}"
-nas_pass: "{{ lookup('ansible.builtin.env', 'HV_NAS_PASSWORD') }}"
+nas_user: "{{ iso_user | default(lookup('ansible.builtin.env', 'HV_NAS_USER'), true) }}"
+nas_pass: "{{ iso_password | default(lookup('ansible.builtin.env', 'HV_NAS_PASSWORD'), true) }}"
 admin_password: "{{ lookup('ansible.builtin.env', 'HV_WINDOWS_PASSWORD') }}"
 root_password: "{{ lookup('ansible.builtin.env', 'HV_ROOT_PASSWORD') }}"
 linux_password: "{{ lookup('ansible.builtin.env', 'HV_LINUX_PASSWORD') }}"
