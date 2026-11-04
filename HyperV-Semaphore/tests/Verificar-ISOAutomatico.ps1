@@ -59,4 +59,7 @@ if (-not $missingRejected -or $global:hvAutoTestState.DismountCount -ne 1) { thr
 $failureRejected=$false
 try { Invoke-FixtureBuild -Case Failure -ExitCode 5 } catch { $failureRejected=$_.Exception.Message -match 'codigo 5' }
 if (-not $failureRejected -or $global:hvAutoTestState.DismountCount -ne 1) { throw 'Oscdimg fallido no interrumpe de forma correcta.' }
+# El codigo 5 anterior es un fallo simulado que ya fue comprobado. GitHub propaga
+# LASTEXITCODE aunque PowerShell haya capturado correctamente la excepcion.
+$global:LASTEXITCODE=0
 'OK: ISO UEFI sin tecla, ruta con espacios, fuente conservada, montajes propios/ajenos y fallos de dependencia/Oscdimg.'
