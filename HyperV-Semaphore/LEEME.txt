@@ -123,6 +123,10 @@ REQUISITOS DEL RUNNER Y HOSTS
 - Copias completas en CSV; se necesita espacio para el disco solicitado y reserva.
 
 ERRORES Y PROTECCIONES
+Para tomar correcciones nuevas usa RUN en la cabecera de la tarea BASE. Repetir
+una ejecucion historica puede fijar su commit anterior: el log muestra
+"Checkout repository to <hash>". Descargar la rama no significa que se use
+esa revision si despues Semaphore vuelve a seleccionar un commit historico.
 No se apagan, sobrescriben ni actualizan VM existentes. Un nombre repetido falla.
 diagnosticar_base.yml revisa sin crear VM los nodos, switches, CSV, ISO y bloqueo
 de la IP. El paso de preparacion muestra errores y fases; solo se oculta el
