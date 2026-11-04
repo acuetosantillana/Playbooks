@@ -33,6 +33,15 @@ Se retiraron ISO, NAS e indice Windows de los formularios de clonacion.
 Cada clon requiere una IP nueva; no puede usar la IP temporal 10.138.120.5.
 
 No se han instalado ni capturado las bases durante la configuracion de tareas.
+27 - DIAGNOSTICO - Base Windows Hyper-V (grupo Windows)
+Archivo: HyperV-Semaphore/playbooks/diagnosticar_base.yml
+Ejecucion 565 correcta: ISO accesible con las variables del grupo, nodos y CSV
+disponibles. No crea VM.
+28 - RECUPERAR - Bloqueo base sin VM (grupo Empty)
+Archivo: HyperV-Semaphore/playbooks/recuperar_bloqueo_base.yml
+Ejecucion 566 correcta: reserva del intento 564 archivada en .locks/.history.
+Solo admite recuperar con fecha exacta, sin VM, rol, carpetas ni respuesta IP.
+Revisar y cambiar los datos del intento antes de reutilizar esta recuperacion.
 Las tareas originales 11 y 13 se consultaron para reutilizar sus enums, sin
 modificarlas. No se guardaron contrasenas por defecto en ninguna tarea nueva.
 Ver LEEME.txt para requisitos y comportamiento operativo.

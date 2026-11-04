@@ -127,6 +127,9 @@ No se apagan, sobrescriben ni actualizan VM existentes. Un nombre repetido falla
 diagnosticar_base.yml revisa sin crear VM los nodos, switches, CSV, ISO y bloqueo
 de la IP. El paso de preparacion muestra errores y fases; solo se oculta el
 valor de la contrasena, en lugar de censurar todo el resultado con no_log.
+recuperar_bloqueo_base.yml archiva una reserva fallida conservando owner.json
+y registro de recuperacion. Exige failed_task_id y expected_lock_created exacto;
+rechaza la recuperacion si existen VM, rol, carpetas o respuesta de la IP.
 No se hace rollback que borre discos ante errores. Se conservan recursos para
 revisar y recuperar; los medios pueden contener contrasenas/hashes.
 La captura solo admite una base dedicada TPL- recien creada por este proceso,
