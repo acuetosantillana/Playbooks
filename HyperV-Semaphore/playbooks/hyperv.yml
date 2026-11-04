@@ -111,7 +111,10 @@
     when: accion == 'crear_base' and vm_os == 'Rocky'
   - name: Mostrar herramientas disponibles en el runner sin modificarlo
     ansible.builtin.command:
-      argv: [python3, -m, pip, --version]
+      argv:
+      - python3
+      - -c
+      - 'import sys,importlib.util; print("Python:",sys.version.split()[0]); print("passlib disponible para hashes:",importlib.util.find_spec("passlib") is not None)'
     delegate_to: localhost
     changed_when: false
     register: runner_tools
