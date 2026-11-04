@@ -45,3 +45,9 @@ Revisar y cambiar los datos del intento antes de reutilizar esta recuperacion.
 Las tareas originales 11 y 13 se consultaron para reutilizar sus enums, sin
 modificarlas. No se guardaron contrasenas por defecto en ninguna tarea nueva.
 Ver LEEME.txt para requisitos y comportamiento operativo.
+
+29 - LIMPIAR - TPL-WS2025 - intento autorizado (grupo Empty)
+Archivo: HyperV-Semaphore/playbooks/limpiar_base_windows.yml
+Solo TPL-WS2025. Exige UUID exacto, Root CSV exacto y fecha de reserva.
+cleanup_apply=false valida sin cambios; true elimina VM, rol, disco y carpeta.
+No usar sobre una VM o instalacion nueva sin autorizacion expresa de borrado.
