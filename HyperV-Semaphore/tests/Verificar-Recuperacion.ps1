@@ -45,6 +45,14 @@ try { & $recovery -Library $library -CsvVolumes @($testRoot) -ClusterNodes @('TE
 if (-not $blocked -or -not (Test-Path $preparation)) { throw 'Se admitio archivar una carpeta posterior a crear discos.' }
 # Solo se retira la carpeta vacia creada por esta prueba, sin recursion.
 Remove-Item -LiteralPath (Join-Path $preparation 'Virtual Hard Disks')
+@{vm_name='TPL-TEST';solo_base=$true} | ConvertTo-Json | Set-Content (Join-Path $preparation 'Provisioning\vm.json')
+Set-Content (Join-Path $preparation 'Provisioning\Generar-Respuestas.ps1') '# bootstrap fixture'
+# Una respuesta ya generada se conserva en su sitio: no se trata como preparacion vacia.
+New-Item -ItemType Directory -Path (Join-Path $preparation 'Provisioning\answers') | Out-Null
+$blocked=$false
+try { & $recovery -Library $library -CsvVolumes @($testRoot) -ClusterNodes @('TEST') -VmName TPL-TEST -IPAddress 192.0.2.5 -ExpectedCreated $timestamp -FailedTaskId 2 -PreparationRoot $preparation } catch { $blocked=$_.Exception.Message -match 'recursos fuera' }
+if (-not $blocked) { throw 'Se permitio archivar una preparacion con respuestas.' }
+Remove-Item -LiteralPath (Join-Path $preparation 'Provisioning\answers')
 & $recovery -Library $library -CsvVolumes @($testRoot) -ClusterNodes @('TEST') -VmName TPL-TEST -IPAddress 192.0.2.5 -ExpectedCreated $timestamp -FailedTaskId 2 -PreparationRoot $preparation
 if ((Test-Path $preparation) -or (Get-Content (Join-Path $Ansible.Result.preparation_archive 'Media\os.iso')) -ne 'test original ISO') { throw 'No se conservo la preparacion archivada.' }
 'OK: archivado recuperable de bloqueo y medios; VM, discos y fecha distinta protegidos.'

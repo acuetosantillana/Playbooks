@@ -22,6 +22,8 @@ La base no crea adm ni otro usuario adicional: se verifica y sella mediante root
 El nombre de usuario y su contrasena se aplican exclusivamente al clonar.
 El sellado bloquea root y las cuentas del maestro; el clon configura sus propias credenciales.
 Rocky clonar exige las contrasenas elegidas para root y el usuario del nuevo clon.
+Los hashes SHA512 se generan con passlib aislado en el directorio temporal del runner.
+No requieren passlib instalado globalmente en el Python de Ansible; se validan antes de reservar IP.
 finalizar_base continua una base instalada y encendida si fallo antes del sellado.
 Valida UUID, manifiesto, disco y reserva; autentica y verifica otra vez el invitado.
 No reinstala ni crea otra VM. Usa la misma IP y las credenciales de esa instalacion.

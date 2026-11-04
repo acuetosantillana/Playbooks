@@ -49,14 +49,14 @@
       argv: [python3, -m, pip, --version]
     delegate_to: localhost
     changed_when: false
-    when: accion == 'crear_base' and vm_os == 'Rocky'
+    when: accion in ['crear_base', 'clonar'] and vm_os == 'Rocky'
   - name: Crear espacio de dependencias sin privilegios para preparar Rocky
     ansible.builtin.tempfile:
       state: directory
       prefix: hyperv-iso-libs-
     delegate_to: localhost
     register: rocky_iso_dependencies
-    when: accion == 'crear_base' and vm_os == 'Rocky'
+    when: accion in ['crear_base', 'clonar'] and vm_os == 'Rocky'
   - name: Consultar tamano ISO Rocky antes de reservar la IP
     ansible.windows.win_powershell:
       script: |
@@ -108,7 +108,29 @@
       - -r
       - '{{ playbook_dir }}/../requirements-iso.txt'
     delegate_to: localhost
-    when: accion == 'crear_base' and vm_os == 'Rocky'
+    when: accion in ['crear_base', 'clonar'] and vm_os == 'Rocky'
+  - name: Preparar hashes Rocky antes de reservar IP o crear discos
+    when: accion in ['crear_base', 'clonar'] and vm_os == 'Rocky'
+    block:
+    - name: Generar hashes en Python aislado sin depender de passlib global
+      ansible.builtin.command:
+        argv:
+        - python3
+        - '{{ playbook_dir }}/../scripts/hash_rocky_passwords.py'
+        stdin: "{{ ({'root': root_password} if accion == 'crear_base' else {'root': root_password, 'user': linux_password}) | to_json }}"
+      environment:
+        PYTHONPATH: '{{ rocky_iso_dependencies.path }}'
+      delegate_to: localhost
+      changed_when: false
+      register: rocky_password_hashes
+      no_log: true
+    always:
+    - name: Retirar dependencias de hashes del clon
+      ansible.builtin.file:
+        path: '{{ rocky_iso_dependencies.path }}'
+        state: absent
+      delegate_to: localhost
+      when: accion == 'clonar'
   - name: Mostrar herramientas disponibles en el runner sin modificarlo
     ansible.builtin.command:
       argv:
@@ -279,7 +301,7 @@
           Stage: '{{ deployment.result.stage }}'
         sensitive_parameters:
         - name: RootHash
-          value: '{{ root_password | password_hash(''sha512'') }}'
+          value: '{{ (rocky_password_hashes.stdout | from_json).root }}'
       when: vm_os == 'Rocky'
       no_log: true
     - name: Integrar respuestas en la ISO UEFI Windows sin pulsar una tecla
@@ -723,9 +745,9 @@
           Oscdimg: '{{ oscdimg_path }}'
         sensitive_parameters:
         - name: RootHash
-          value: '{{ root_password | password_hash(''sha512'') }}'
+          value: '{{ (rocky_password_hashes.stdout | from_json).root }}'
         - name: UserHash
-          value: '{{ linux_password | password_hash(''sha512'') }}'
+          value: '{{ (rocky_password_hashes.stdout | from_json).user }}'
       when: vm_os == 'Rocky'
       no_log: true
     - name: Registrar el clon en HA e iniciar desde su disco

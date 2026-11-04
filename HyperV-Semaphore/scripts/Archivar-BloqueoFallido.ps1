@@ -38,10 +38,15 @@ if ($PreparationRoot) {
     if (Get-Process -Name oscdimg -ErrorAction SilentlyContinue) { throw 'Oscdimg sigue activo; no se mueve su preparacion.' }
     $items=@(Get-ChildItem -LiteralPath $archivePreparation -Recurse -Force)
     if ($items | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }) { throw 'Se detecto un enlace en la preparacion.' }
+    $configPath=Join-Path $archivePreparation 'Provisioning\vm.json'
+    if (Test-Path -LiteralPath $configPath) {
+        $config=Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+        if ($config.vm_name -ne $VmName -or $config.solo_base -ne $true) { throw 'La configuracion no corresponde a esta base.' }
+    }
     foreach ($item in $items) {
         $relative=$item.FullName.Substring($archivePreparation.Length+1)
         # Solo el estado anterior a generar respuestas o crear discos/VM.
-        if ($relative -notmatch '^(Media|Provisioning)$|^Provisioning\\windows-media(?:\\.*)?$|^Media\\(?:os\.iso|os-uefi-auto\.iso(?:\.partial)?|os-uefi-auto\.json|oscdimg-uefi\.(?:stdout|stderr)\.log)$') { throw "Hay recursos fuera de la preparacion de ISO: $relative" }
+        if ($relative -notmatch '^(Media|Provisioning)$|^Provisioning\\windows-media(?:\\.*)?$|^Provisioning\\(?:Configurar-Windows\.ps1|Generar-Respuestas\.ps1|Personalizar-Clon\.ps1|rocky9(?:-base)?\.ks\.tpl|vm\.json|fuentes-originales(?:\\windows-original\.xml\.j2)?)$|^Media\\(?:os\.iso|os-uefi-auto\.iso(?:\.partial)?|os-uefi-auto\.json|oscdimg-uefi\.(?:stdout|stderr)\.log)$') { throw "Hay recursos fuera de la preparacion de ISO: $relative" }
     }
     $sourceImage=Join-Path $archivePreparation 'Media\os.iso'
     if ((Get-DiskImage -ImagePath $sourceImage -ErrorAction Stop).Attached) { throw 'La ISO sigue montada; no se mueve.' }

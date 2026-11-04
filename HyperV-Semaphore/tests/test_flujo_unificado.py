@@ -54,6 +54,23 @@ assert 'rocky_base_user_password' not in source
 assert "else ''root'' }}" in baseflow
 assert "else root_password }}" in baseflow
 assert 'passwd -l root' in (root/'files/sellar-rocky.sh').read_text()
+hash_spec=importlib.util.spec_from_file_location('hash_rocky',root/'scripts/hash_rocky_passwords.py')
+hasher=importlib.util.module_from_spec(hash_spec)
+hash_spec.loader.exec_module(hasher)
+from passlib.hash import sha512_crypt
+base_hash=hasher.hash_passwords({'root':'test-only-root'})
+assert set(base_hash)=={'root'} and sha512_crypt.verify('test-only-root',base_hash['root'])
+clone_hash=hasher.hash_passwords({'root':'test-only-root','user':'test-only-user'})
+assert sha512_crypt.verify('test-only-user',clone_hash['user'])
+assert base_hash['root']!=clone_hash['root']
+try:
+    hasher.hash_passwords({'root':''})
+except ValueError:
+    pass
+else:
+    raise AssertionError('Se acepto root vacio.')
+assert "password_hash(''sha512'')" not in source
+assert source.index('Generar hashes en Python aislado') < source.index('Bloquear la IP compartida')
 print('OK: un archivo, acciones excluyentes y GRUB con Install + timeout 3 segundos.')
 
 # ISO y FAT UEFI reales de prueba: no se usan ISO de produccion ni una VM.
