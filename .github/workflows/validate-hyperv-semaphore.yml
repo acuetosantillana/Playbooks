@@ -1,9 +1,9 @@
 name: Validar nuevos despliegues Hyper-V
 on:
   push:
-    paths: ['HyperV-Semaphore/**', '.github/workflows/validate-hyperv-semaphore.yml']
+    paths: ['HyperV-Semaphore/**', 'collections/requirements.yml', '.github/workflows/validate-hyperv-semaphore.yml']
   pull_request:
-    paths: ['HyperV-Semaphore/**', '.github/workflows/validate-hyperv-semaphore.yml']
+    paths: ['HyperV-Semaphore/**', 'collections/requirements.yml', '.github/workflows/validate-hyperv-semaphore.yml']
 permissions:
   contents: read
 jobs:

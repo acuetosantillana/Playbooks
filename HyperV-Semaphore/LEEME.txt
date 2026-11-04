@@ -38,10 +38,11 @@ INVENTARIO Y RUNNER
   usa 5986 y validacion de certificado; no deshabilita esa comprobacion.
 - El runner Linux necesita Ansible y los paquetes de requirements-runner.txt,
   ademas de OpenSSH y sshpass para verificar Rocky con usuario/contrasena.
-- Instalar la coleccion de HyperV-Semaphore/requirements.yml. No depende de
-  requirements de los directorios antiguos. En Semaphore configurar la ruta
-  de Galaxy si tu version lo permite; en otras versiones preinstalarla en el
-  runner. Los paquetes Python van en el MISMO entorno que ejecuta Ansible.
+- collections/requirements.yml en la raiz de ESTA RAMA permite a Semaphore
+  detectar e instalar ansible.windows mediante Galaxy. Se mantiene sincronizado
+  con HyperV-Semaphore/requirements.yml para instalaciones manuales/CI.
+  Los paquetes Python van en el MISMO entorno que ejecuta Ansible; Galaxy no
+  instala pywinrm/credssp/passlib ni sshpass. Verificar el runner antes de ejecutar.
 - El runner debe alcanzar el WinRM de los nodos, el puerto 5985 de la nueva VM
   Windows y el puerto 22 de Rocky. Si no hay esa ruta, la verificacion falla.
 - Windows invitado usa NTLM con cifrado de mensajes; no habilita Basic ni

@@ -1,0 +1,27 @@
+Configuracion creada el 3 de noviembre de 2026 en el proyecto Santillana.
+
+Repositorio nuevo: Playbooks - HyperV nuevas tareas
+URL Git: https://github.com/acuetosantillana/Playbooks.git
+Rama: codex/hyperv-semaphore-nuevas-tareas
+La referencia anterior Playbooks / main se conserva.
+
+Tarea 23: NUEVO - Windows Server 2025 - Hyper-V HA
+https://smxsemaphore.santillana.com.mx/project/1/views/5/templates/23/tasks
+Playbook: HyperV-Semaphore/playbooks/crear_windows_2025.yml
+
+Tarea 24: NUEVO - Rocky Linux 9 - Hyper-V HA
+https://smxsemaphore.santillana.com.mx/project/1/views/5/templates/24/tasks
+Playbook: HyperV-Semaphore/playbooks/crear_rocky_9.yml
+
+Ambas usan el inventario Hipervisores Windows y la vista Hipervisores.
+Grupo de variables: Empty, para no heredar valores fijos de otras VM.
+No se lanzaron instalaciones. Recursos y datos de red se piden al ejecutar.
+Windows solicita vm_image_index y admin_password como secreto.
+Rocky solicita linux_user, root_password y linux_password (las dos como secretos).
+Ambas admiten nas_user y nas_pass opcionales; nas_pass es secreto.
+Estos campos van como extra-vars protegidas, compatibles con la version
+observada de Semaphore; no se rellenaron ni guardaron contrasenas por defecto.
+La cuenta y contrasena de los nodos siguen siendo las del inventario existente.
+
+Los playbooks antiguos y las tareas 11/13 no se modificaron.
+Ver LEEME.txt para requisitos del runner, permisos, ISO, arranque y limites.

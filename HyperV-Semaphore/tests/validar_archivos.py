@@ -26,6 +26,7 @@ def mapping(loader, node, deep=False):
 
 UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
 env = Environment()
+assert yaml.safe_load((root.parent / 'collections/requirements.yml').read_text()) == yaml.safe_load((root / 'requirements.yml').read_text())
 
 
 def check_jinja(value):
