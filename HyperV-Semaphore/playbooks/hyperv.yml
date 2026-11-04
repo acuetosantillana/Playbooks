@@ -37,6 +37,18 @@
       windows_admin_user: '{{ windows_account | default(''Administrator'', true) }}'
       hv_iso_path: '{{ installation_iso_path | default((iso_path | default(windows_iso_default, true)) if vm_os == ''Windows'' else (rocky_iso_path
         | default(rocky_iso_default, true)), true) }}'
+  - name: Generar credenciales temporales exclusivas para instalar la base Rocky
+    ansible.builtin.set_fact:
+      rocky_base_root_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=40, chars=['ascii_letters', 'digits']) }}"
+      rocky_base_user_password: "{{ lookup('ansible.builtin.password', '/dev/null', length=40, chars=['ascii_letters', 'digits']) }}"
+    when: accion == 'crear_base' and vm_os == 'Rocky'
+    no_log: true
+  - name: Elegir credenciales temporales de base o las solicitadas para el clon
+    ansible.builtin.set_fact:
+      rocky_effective_root_password: "{{ rocky_base_root_password if accion == 'crear_base' else root_password }}"
+      rocky_effective_user_password: "{{ rocky_base_user_password if accion == 'crear_base' else linux_password }}"
+    when: vm_os == 'Rocky'
+    no_log: true
   - name: Comprobar herramientas de Rocky antes de reservar la IP o copiar ISO
     ansible.builtin.command:
       argv: [python3, -m, pip, --version]
@@ -205,9 +217,9 @@
     - name: Validar secretos de Rocky
       ansible.builtin.assert:
         that:
-        - root_password | length > 0
-        - linux_password | length > 0
-        fail_msg: Rocky requiere las contrasenas de root y del usuario administrador.
+        - rocky_effective_root_password | length > 0
+        - rocky_effective_user_password | length > 0
+        fail_msg: No se generaron las credenciales temporales de instalacion de Rocky.
       when: vm_os == 'Rocky'
       no_log: true
     - name: Validar credenciales opcionales de NAS
@@ -270,9 +282,9 @@
           Stage: '{{ deployment.result.stage }}'
         sensitive_parameters:
         - name: RootHash
-          value: '{{ root_password | password_hash(''sha512'') }}'
+          value: '{{ rocky_effective_root_password | password_hash(''sha512'') }}'
         - name: UserHash
-          value: '{{ linux_password | password_hash(''sha512'') }}'
+          value: '{{ rocky_effective_user_password | password_hash(''sha512'') }}'
       when: vm_os == 'Rocky'
       no_log: true
     - name: Integrar respuestas en la ISO UEFI Windows sin pulsar una tecla
@@ -408,7 +420,7 @@
         ansible_connection: '{{ ''winrm'' if vm_os == ''Windows'' else ''ssh'' }}'
         ansible_port: '{{ 5985 if vm_os == ''Windows'' else 22 }}'
         ansible_user: '{{ windows_admin_user if vm_os == ''Windows'' else linux_user }}'
-        ansible_password: '{{ admin_password if vm_os == ''Windows'' else linux_password }}'
+        ansible_password: '{{ admin_password if vm_os == ''Windows'' else rocky_effective_user_password }}'
         ansible_winrm_transport: ntlm
         ansible_winrm_message_encryption: always
         ansible_ssh_common_args: '{{ '''' if vm_os == ''Windows'' else ''-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile='' + ssh_hosts_file.path
