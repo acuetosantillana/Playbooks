@@ -69,7 +69,8 @@
           OscdimgPath: "{{ oscdimg_path }}"
         sensitive_parameters: "{{ [{'name': 'NasCredential', 'username': nas_user, 'password': nas_pass}] if nas_user | length > 0 else [] }}"
       register: deployment
-      no_log: true
+      # sensitive_parameters oculta la contrasena; dejar visibles los errores
+      # de permisos, switches, rutas y capacidad sin censurar todo el resultado.
 
     - name: Preparar arranque UEFI Windows sin pulsar una tecla
       ansible.windows.win_powershell:

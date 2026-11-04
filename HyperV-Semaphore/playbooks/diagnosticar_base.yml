@@ -1,0 +1,27 @@
+---
+- name: Diagnosticar requisitos de la base sin crear ni modificar VM
+  hosts: "{{ hyperv_host | default('SMXHYPVA') }}"
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files: [../config/cluster.yml, ../config/plantillas.yml]
+  vars:
+    ansible_winrm_transport: credssp
+  tasks:
+    - name: Recopilar diagnostico de Hyper-V, CSV y acceso al NAS
+      ansible.windows.win_powershell:
+        path: "{{ playbook_dir }}/../scripts/Diagnosticar-Base.ps1"
+        depth: 6
+        error_action: stop
+        parameters:
+          VmName: "{{ vm_name | default('TPL-WS2025') }}"
+          ClusterNodes: "{{ cluster_nodes }}"
+          CsvVolumes: "{{ csv_volumes }}"
+          SwitchName: "{{ v_switch | default(clone_switch, true) }}"
+          IsoPath: "{{ iso_path | default(windows_iso_default, true) }}"
+          OscdimgPath: "{{ oscdimg_path }}"
+          Library: "{{ template_library }}"
+          BaseIP: "{{ base_install_ip }}"
+      register: base_diagnostics
+    - name: Mostrar causas comprobadas sin contrasenas
+      ansible.builtin.debug:
+        var: base_diagnostics.result

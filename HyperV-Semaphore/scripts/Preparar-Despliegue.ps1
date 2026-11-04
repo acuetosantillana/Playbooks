@@ -14,11 +14,13 @@ $ErrorActionPreference = 'Stop'
 $Ansible.Changed = $false
 Import-Module Hyper-V
 Import-Module FailoverClusters
+Write-Host 'Preparacion: comprobar Oscdimg y acceso al cluster.'
 if (-not (Test-Path -LiteralPath $OscdimgPath -PathType Leaf)) { throw 'Falta oscdimg.exe en el nodo ejecutor.' }
 $cluster = Get-Cluster
 $nodes = @(Get-ClusterNode)
 if ($env:COMPUTERNAME -notin $ClusterNodes) { throw 'El ejecutor no pertenece a los nodos autorizados.' }
 foreach ($nodeName in $ClusterNodes) {
+    Write-Host "Preparacion: comprobar nodo $nodeName, switch $SwitchName y VM existentes."
     $node = $nodes | Where-Object Name -eq $nodeName
     if (-not $node -or $node.State -ne 'Up') { throw "El nodo $nodeName debe estar disponible durante el despliegue." }
     $null = Get-VMSwitch -ComputerName $nodeName -Name $SwitchName -ErrorAction Stop
@@ -29,6 +31,7 @@ $drive = $null
 try {
     $sourcePath = $IsoPath
     if ($NasCredential) {
+        Write-Host 'Preparacion: abrir acceso al NAS con la credencial protegida recibida.'
         if ($IsoPath -notmatch '^\\\\([^\\]+)\\([^\\]+)\\(.+)$') { throw 'Con credencial NAS se requiere una ruta UNC completa.' }
         $shareRoot = '\\' + $Matches[1] + '\' + $Matches[2]
         $relativePath = $Matches[3]
@@ -36,6 +39,7 @@ try {
         $drive = New-PSDrive -Name $driveName -PSProvider FileSystem -Root $shareRoot -Credential $NasCredential -Scope Script
         $sourcePath = $driveName + ':\' + $relativePath
     }
+    Write-Host 'Preparacion: comprobar acceso y existencia de la ISO de origen.'
     $iso = Get-Item -LiteralPath $sourcePath -ErrorAction Stop
     if ($iso.PSIsContainer -or $iso.Extension -ne '.iso') { throw 'IsoPath debe ser un archivo ISO.' }
     $candidates = @()
@@ -50,6 +54,7 @@ try {
         }
     }
     $required = $DiskBytes + ($iso.Length * $IsoCopies) + $ReserveBytes
+    Write-Host 'Preparacion: seleccionar un CSV autorizado con espacio suficiente.'
     $best = $candidates | Where-Object Free -ge $required | Sort-Object Free -Descending | Select-Object -First 1
     if (-not $best) { throw 'Ningun CSV autorizado tiene espacio suficiente para disco, ISO y reserva.' }
     $root = Join-Path (Join-Path $best.Path 'SemaphoreVMs') $VmName
@@ -57,6 +62,7 @@ try {
     if (-not (Test-Path -LiteralPath $parentPath)) { New-Item -ItemType Directory -Path $parentPath -Force | Out-Null }
     # Sin Force: reservar un nombre existente falla, incluso entre trabajos concurrentes.
     New-Item -ItemType Directory -Path $root -ErrorAction Stop | Out-Null
+    Write-Host 'Preparacion: crear carpetas y proteger el directorio temporal.'
     $stage = Join-Path $root 'Provisioning'
     $media = Join-Path $root 'Media'
     New-Item -ItemType Directory -Path $stage,$media | Out-Null
@@ -71,6 +77,7 @@ try {
     }
     Set-Acl -LiteralPath $stage -AclObject $acl
     $osIso = Join-Path $media 'os.iso'
+    Write-Host 'Preparacion: copiar la ISO al CSV.'
     Copy-Item -LiteralPath $sourcePath -Destination ($osIso + '.partial') -ErrorAction Stop
     if ((Get-Item -LiteralPath ($osIso + '.partial')).Length -ne $iso.Length) { throw 'La copia de ISO quedo incompleta.' }
     Move-Item -LiteralPath ($osIso + '.partial') -Destination $osIso
