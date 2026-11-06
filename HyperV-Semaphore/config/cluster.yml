@@ -11,6 +11,10 @@ csv_volumes:
   - 'C:\ClusterStorage\Volume7'
 oscdimg_path: 'C:\Oscdimg\oscdimg.exe'
 windows_automatic_boot: true
+# false: usar la ISO original de Rocky tal cual (GRUB arranca solo por timeout de 60 s
+# y el Kickstart va en OEMDRV). true: reconstruir la ISO en el runner para seleccionar
+# Install a los 3 s, lo que requiere transferir ~30 GB por WinRM y tarda mas de una hora.
+rocky_automatic_iso: false
 # Vacio: buscar en la ISO, junto a oscdimg.exe y en Deployment Tools del ADK.
 efisys_noprompt_path: ''
 windows_iso_default: '\\10.138.120.130\isos\SERVER_EVAL_x64FRE_es-es.iso'

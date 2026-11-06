@@ -1,0 +1,402 @@
+# PUNTO DE ENTRADA PARA LAS TAREAS DE CLONACION (Clonar - Windows / Clonar - Rocky).
+# Contiene solo los plays del flujo clonar para que el log no muestre los pasos de base.
+# Las operaciones de base y mantenimiento siguen en hyperv.yml (tarea BASE).
+- name: Hyper-V - un solo flujo para Windows y Rocky
+  hosts: '{{ hyperv_host | default(''SMXHYPVA'') }}'
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files:
+  - ../config/cluster.yml
+  - ../config/plantillas.yml
+  vars:
+    accion: crear_base
+    vm_os: Windows
+    ansible_winrm_transport: credssp
+  tasks:
+  - name: Validar operacion y sistema seleccionados
+    ansible.builtin.assert:
+      that:
+      - ansible_play_hosts_all | length == 1
+      - accion in ['crear_base', 'clonar', 'diagnosticar', 'finalizar_base', 'recuperar_reserva', 'limpiar']
+      - vm_os in ['Windows', 'Rocky']
+      - accion != 'limpiar' or vm_os == 'Windows'
+  - name: Aplicar valores base; las variables del formulario tienen prioridad
+    ansible.builtin.set_fact:
+      hyperv_host: '{{ inventory_hostname }}'
+      vm_name: '{{ nombre_vm | default(''TPL-WS2025'' if vm_os == ''Windows'' else ''TPL-ROCKY9'', true) }}'
+      template_id: '{{ ''ws2025-base-v1'' if vm_os == ''Windows'' else ''rocky9-base-v1'' }}'
+      vm_ip: '{{ direccion_ip | default(base_install_ip, true) }}'
+      vm_vlan: '{{ base_install_vlan }}'
+      vm_mask: 24
+      memory_gb: '{{ 8 if vm_os == ''Windows'' else 4 }}'
+      cpu: 4
+      disk_gb: 100
+      v_switch: SETvSwitch
+      vm_image_index: 2
+      solo_base: true
+      windows_ui_language: '{{ windows_language | default(''en-US'', true) }}'
+      windows_admin_user: '{{ windows_account | default(''Administrator'', true) }}'
+      hv_iso_path: '{{ installation_iso_path | default((iso_path | default(windows_iso_default, true)) if vm_os == ''Windows'' else (rocky_iso_path
+        | default(rocky_iso_default, true)), true) }}'
+  - name: Exigir contrasena root de la base Rocky antes de reservar IP
+    ansible.builtin.assert:
+      that:
+      - root_password | default('', true) | length > 0
+      fail_msg: Introduce la contrasena root de Rocky; el usuario adicional se crea solo al clonar.
+    when: accion == 'crear_base' and vm_os == 'Rocky'
+    no_log: true
+  - name: Comprobar herramientas de Rocky antes de reservar la IP o copiar ISO
+    ansible.builtin.command:
+      argv:
+      - python3
+      - -m
+      - pip
+      - --version
+    delegate_to: localhost
+    changed_when: false
+    when: accion in ['crear_base', 'clonar'] and vm_os == 'Rocky'
+  - name: Crear espacio de dependencias sin privilegios para preparar Rocky
+    ansible.builtin.tempfile:
+      state: directory
+      prefix: hyperv-iso-libs-
+    delegate_to: localhost
+    register: rocky_iso_dependencies
+    when: accion in ['crear_base', 'clonar'] and vm_os == 'Rocky'
+  - name: Consultar tamano ISO Rocky antes de reservar la IP
+    ansible.windows.win_powershell:
+      script: "param([string]$IsoPath,[PSCredential]$NasCredential)\n$Ansible.Changed=$false\n$drive=$null\ntry {\n    $source=$IsoPath\n    if\
+        \ ($NasCredential) {\n        if ($IsoPath -notmatch '^\\\\\\\\([^\\\\]+)\\\\([^\\\\]+)\\\\(.+)$') { throw 'La ISO requiere ruta UNC completa.'\
+        \ }\n        $share='\\\\'+$Matches[1]+'\\'+$Matches[2]\n        $relative=$Matches[3]\n        $name='ISO'+[guid]::NewGuid().ToString('N').Substring(0,8)\n\
+        \        $drive=New-PSDrive -Name $name -PSProvider FileSystem -Root $share -Credential $NasCredential -Scope Script\n        $source=$name+':\\\
+        '+$relative\n    }\n    $file=Get-Item -LiteralPath $source -ErrorAction Stop\n    if ($file.PSIsContainer -or $file.Extension -ne '.iso')\
+        \ { throw 'Se requiere un archivo ISO.' }\n    $Ansible.Result=@{bytes=$file.Length}\n} finally { if ($drive) { Remove-PSDrive -Name $drive.Name\
+        \ -Force } }\n"
+      parameters:
+        IsoPath: '{{ hv_iso_path }}'
+      sensitive_parameters: '{{ [{''name'': ''NasCredential'', ''username'': nas_user, ''password'': nas_pass}] if nas_user | length > 0 else
+        [] }}'
+      error_action: stop
+    register: rocky_source_size
+    when: accion == 'crear_base' and vm_os == 'Rocky'
+  - name: Verificar espacio del runner para dos copias ISO antes de reservar IP
+    ansible.builtin.command:
+      argv:
+      - python3
+      - -c
+      - import shutil,sys; need=int(sys.argv[2])*2+1073741824; free=shutil.disk_usage(sys.argv[1]).free; print("Espacio disponible:",free,"requerido:",need);
+        sys.exit(0 if free>=need else 1)
+      - '{{ rocky_iso_dependencies.path }}'
+      - '{{ rocky_source_size.result.bytes }}'
+    delegate_to: localhost
+    changed_when: false
+    when: accion == 'crear_base' and vm_os == 'Rocky' and rocky_automatic_iso | bool
+  - name: Preparar bibliotecas de ISO en el espacio temporal del runner
+    ansible.builtin.command:
+      argv:
+      - python3
+      - -m
+      - pip
+      - install
+      - --disable-pip-version-check
+      - --no-cache-dir
+      - --target
+      - '{{ rocky_iso_dependencies.path }}'
+      - -r
+      - '{{ playbook_dir }}/../requirements-iso.txt'
+    delegate_to: localhost
+    when: accion in ['crear_base', 'clonar'] and vm_os == 'Rocky'
+  - name: Preparar hashes Rocky antes de reservar IP o crear discos
+    when: accion in ['crear_base', 'clonar'] and vm_os == 'Rocky'
+    block:
+    - name: Generar hashes en Python aislado sin depender de passlib global
+      ansible.builtin.command:
+        argv:
+        - python3
+        - '{{ playbook_dir }}/../scripts/hash_rocky_passwords.py'
+        stdin: '{{ ({''root'': root_password} if accion == ''crear_base'' else {''root'': root_password, ''user'': linux_password}) | to_json
+          }}'
+      environment:
+        PYTHONPATH: '{{ rocky_iso_dependencies.path }}'
+      delegate_to: localhost
+      changed_when: false
+      register: rocky_password_hashes
+      no_log: true
+    always:
+    - name: Retirar dependencias de hashes del clon
+      ansible.builtin.file:
+        path: '{{ rocky_iso_dependencies.path }}'
+        state: absent
+      delegate_to: localhost
+      when: accion == 'clonar'
+  - name: Mostrar herramientas disponibles en el runner sin modificarlo
+    ansible.builtin.command:
+      argv:
+      - python3
+      - -c
+      - import sys,importlib.util; print("Python:",sys.version.split()[0]); print("passlib disponible para hashes:",importlib.util.find_spec("passlib")
+        is not None)
+    delegate_to: localhost
+    changed_when: false
+    register: runner_tools
+    when: accion == 'diagnosticar'
+  - name: Informar herramientas del runner
+    ansible.builtin.debug:
+      var: runner_tools.stdout_lines
+    when: accion == 'diagnosticar'
+- name: Crear una VM nueva copiando una imagen base ya instalada
+  hosts: '{{ hyperv_host }}'
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files:
+  - ../config/cluster.yml
+  - ../config/plantillas.yml
+  vars:
+    accion: crear_base
+    vm_os: Windows
+    ansible_winrm_transport: credssp
+  pre_tasks:
+  - name: Operacion clonar
+    when: accion == 'clonar'
+    block:
+    - name: Validar seleccion de hipervisor, VLAN y plantilla
+      ansible.builtin.assert:
+        that:
+        - ansible_play_hosts_all | length == 1
+        - template_id in template_catalog
+        - template_catalog[template_id].system == vm_os
+        - vm_vlan | int in allowed_vlans
+        - vm_name is match('^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$')
+        - vm_os != 'Windows' or vm_name | length <= 15
+        - memory_gb | int >= 4
+        - cpu | int >= 1
+        - cpu | int <= 64
+        - disk_gb | int >= 100
+        - vm_ip != base_install_ip
+        - vm_mask | int >= 1
+        - vm_mask | int <= 30
+        - vm_gateway | length > 0
+        - vm_dns1 | length > 0
+        fail_msg: Completa la configuracion; 10.138.120.5 esta reservada para instalar las bases.
+    - name: Validar credenciales nuevas del invitado
+      ansible.builtin.assert:
+        that:
+        - (vm_os == 'Windows' and admin_password | length > 0) or (vm_os == 'Rocky' and root_password | length > 0 and linux_password | length
+          > 0)
+      no_log: true
+  tasks:
+  - name: Operacion clonar
+    when: accion == 'clonar'
+    block:
+    - name: Copiar el VHDX completo y crear VM nueva apagada
+      ansible.windows.win_powershell:
+        path: '{{ playbook_dir }}/../scripts/Clonar-Plantilla.ps1'
+        error_action: stop
+        parameters:
+          VmName: '{{ vm_name }}'
+          TemplateId: '{{ template_id }}'
+          Sistema: '{{ vm_os }}'
+          Library: '{{ template_library }}'
+          ClusterNodes: '{{ cluster_nodes }}'
+          CsvVolumes: '{{ csv_volumes }}'
+          SwitchName: '{{ v_switch | default(clone_switch, true) }}'
+          MemoryBytes: '{{ (memory_gb | int) * 1073741824 }}'
+          DiskBytes: '{{ (disk_gb | int) * 1073741824 }}'
+          CpuCount: '{{ cpu | int }}'
+          VlanId: '{{ vm_vlan | int }}'
+          ReserveBytes: '{{ (reserve_gb | int) * 1073741824 }}'
+      register: deployment
+    - name: Copiar herramientas de personalizacion al directorio restringido
+      ansible.windows.win_copy:
+        src: '{{ playbook_dir }}/../files/bootstrap/'
+        dest: '{{ deployment.result.stage }}\'
+    - name: Guardar parametros propios de este clon sin contrasenas
+      ansible.windows.win_copy:
+        content: '{{ {''vm_name'': vm_name, ''vm_ip'': vm_ip, ''vm_mask'': vm_mask | int, ''vm_gateway'': vm_gateway, ''vm_dns1'': vm_dns1, ''vm_dns2'':
+          vm_dns2, ''linux_user'': linux_user, ''rdp_port'': rdp_port} | to_nice_json }}'
+        dest: '{{ deployment.result.stage }}\vm.json'
+    - name: Personalizar Windows offline antes del primer arranque
+      ansible.windows.win_powershell:
+        script: 'param([string]$Root, [string]$Stage, [Security.SecureString]$Password)
+
+          & (Join-Path $Stage ''Personalizar-Clon.ps1'') -Root $Root -RequestFile (Join-Path $Stage ''vm.json'') -AdminPassword $Password
+
+          '
+        error_action: stop
+        parameters:
+          Root: '{{ deployment.result.root }}'
+          Stage: '{{ deployment.result.stage }}'
+        sensitive_parameters:
+        - name: Password
+          value: '{{ admin_password }}'
+      when: vm_os == 'Windows'
+      no_log: true
+    - name: Crear semilla cloud-init propia para Rocky
+      ansible.windows.win_powershell:
+        script: 'param([string]$Root, [string]$Stage, [string]$Oscdimg, [Security.SecureString]$RootHash, [Security.SecureString]$UserHash)
+
+          & (Join-Path $Stage ''Personalizar-Clon.ps1'') -Root $Root -RequestFile (Join-Path $Stage ''vm.json'') -RootHash $RootHash -UserHash
+          $UserHash -OscdimgPath $Oscdimg
+
+          '
+        error_action: stop
+        parameters:
+          Root: '{{ deployment.result.root }}'
+          Stage: '{{ deployment.result.stage }}'
+          Oscdimg: '{{ oscdimg_path }}'
+        sensitive_parameters:
+        - name: RootHash
+          value: '{{ (rocky_password_hashes.stdout | from_json).root }}'
+        - name: UserHash
+          value: '{{ (rocky_password_hashes.stdout | from_json).user }}'
+      when: vm_os == 'Rocky'
+      no_log: true
+    - name: Registrar el clon en HA e iniciar desde su disco
+      ansible.windows.win_powershell:
+        path: '{{ playbook_dir }}/../scripts/Arrancar-Clon.ps1'
+        error_action: stop
+        parameters:
+          Root: '{{ deployment.result.root }}'
+    - name: Configurar la red del clon Windows por PowerShell Direct desde el host
+      ansible.windows.win_powershell:
+        path: '{{ playbook_dir }}/../scripts/Configurar-RedClon.ps1'
+        error_action: stop
+        parameters:
+          Root: '{{ deployment.result.root }}'
+          AdminUser: '{{ windows_admin_user }}'
+          TimeoutMinutes: 20
+        sensitive_parameters:
+        - name: AdminPassword
+          value: '{{ admin_password }}'
+      when: vm_os == 'Windows'
+      register: clone_network
+    - name: Mostrar estado de red aplicado al clon Windows
+      ansible.builtin.debug:
+        var: clone_network.result
+      when: vm_os == 'Windows'
+    - name: Crear archivo de huellas SSH exclusivo de esta tarea
+      ansible.builtin.tempfile:
+        state: file
+        prefix: semaphore-clone-knownhosts-
+      delegate_to: localhost
+      when: vm_os == 'Rocky'
+      register: ssh_hosts_file
+    - name: Registrar invitado con las credenciales especificas del clon
+      ansible.builtin.add_host:
+        name: hv_semaphore_guest
+        groups: hv_semaphore_guests
+        ansible_host: '{{ vm_ip }}'
+        ansible_connection: '{{ ''winrm'' if vm_os == ''Windows'' else ''ssh'' }}'
+        ansible_port: '{{ 5985 if vm_os == ''Windows'' else 22 }}'
+        ansible_user: '{{ windows_admin_user if vm_os == ''Windows'' else linux_user }}'
+        ansible_password: '{{ admin_password if vm_os == ''Windows'' else linux_password }}'
+        ansible_winrm_transport: ntlm
+        ansible_winrm_message_encryption: always
+        ansible_ssh_common_args: '{{ '''' if vm_os == ''Windows'' else ''-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile='' + ssh_hosts_file.path
+          }}'
+        expected_instance: '{{ deployment.result.instance_id }}'
+        expected_vm_name: '{{ vm_name }}'
+        expected_vm_ip: '{{ vm_ip }}'
+        expected_system: '{{ vm_os }}'
+      no_log: true
+- name: Verificar identidad y primer arranque del clon
+  hosts: hv_semaphore_guests
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+  - name: Operacion clonar
+    when: accion == 'clonar'
+    block:
+    - name: Esperar conexion autenticada al sistema ya instalado
+      ansible.builtin.wait_for_connection:
+        timeout: 1800
+        sleep: 10
+    - name: Verificar personalizacion Windows
+      ansible.windows.win_powershell:
+        script: 'param([string]$Name,[string]$Instance,[string]$IPAddress)
+
+          $Ansible.Changed=$false
+
+          $identity=Get-Content ''C:\ProgramData\Semaphore\instance.json'' -Raw | ConvertFrom-Json
+
+          if ($identity.instance_id -ne $Instance -or $env:COMPUTERNAME -ne $Name) { throw ''Identidad Windows no coincide con el clon.'' }
+
+          if (-not (Get-NetIPAddress -AddressFamily IPv4 | Where-Object IPAddress -eq $IPAddress)) { throw ''IP Windows no coincide.'' }
+
+          '
+        error_action: stop
+        parameters:
+          Name: '{{ expected_vm_name }}'
+          Instance: '{{ expected_instance }}'
+          IPAddress: '{{ expected_vm_ip }}'
+      register: clone_windows_verified
+      until: clone_windows_verified is succeeded
+      retries: 30
+      delay: 5
+      when: expected_system == 'Windows'
+    - name: Esperar que cloud-init finalice sin errores
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+      when: expected_system == 'Rocky'
+    - name: Leer identidad nueva de Rocky
+      ansible.builtin.command: cat /etc/semaphore-instance.json
+      changed_when: false
+      register: rocky_instance
+      failed_when: rocky_instance.rc != 0 or (rocky_instance.stdout | from_json).instance_id != expected_instance or (rocky_instance.stdout |
+        from_json).vm_name != expected_vm_name
+      when: expected_system == 'Rocky'
+    - name: Retirar respuestas Windows con contrasena temporal
+      ansible.windows.win_file:
+        path: '{{ item }}'
+        state: absent
+      loop:
+      - C:\Windows\Panther\Unattend.xml
+      - C:\Windows\Panther\Unattend\Unattend.xml
+      - C:\Windows\Panther\unattend-original.xml
+      - C:\ProgramData\Semaphore\Customize.ps1
+      when: expected_system == 'Windows'
+    - name: Confirmar verificacion del clon
+      ansible.builtin.set_fact:
+        guest_verified: true
+  vars:
+    accion: crear_base
+    vm_os: Windows
+  vars_files:
+  - ../config/cluster.yml
+  - ../config/plantillas.yml
+- name: Retirar semilla temporal tras verificar el clon
+  hosts: '{{ hyperv_host }}'
+  gather_facts: false
+  any_errors_fatal: true
+  vars_files:
+  - ../config/cluster.yml
+  - ../config/plantillas.yml
+  vars:
+    accion: crear_base
+    vm_os: Windows
+    ansible_winrm_transport: credssp
+  tasks:
+  - name: Operacion clonar
+    when: accion == 'clonar'
+    block:
+    - name: Exigir verificacion del invitado
+      ansible.builtin.assert:
+        that:
+        - hostvars['hv_semaphore_guest'].guest_verified | default(false) | bool
+    - name: Desmontar semilla y limpiar archivos temporales de esta VM
+      ansible.windows.win_powershell:
+        path: '{{ playbook_dir }}/../scripts/Limpiar-Medios.ps1'
+        error_action: stop
+        parameters:
+          VmName: '{{ vm_name }}'
+          Root: '{{ deployment.result.root }}'
+          CsvVolumes: '{{ csv_volumes }}'
+      register: completed
+    - name: Limpiar archivo temporal de huellas del runner
+      ansible.builtin.file:
+        path: '{{ ssh_hosts_file.path }}'
+        state: absent
+      delegate_to: localhost
+      when: vm_os == 'Rocky'
+    - name: Informar despliegue desde imagen base sin instalar el sistema operativo
+      ansible.builtin.debug:
+        msg: VM {{ vm_name }} creada desde {{ template_id }}; IP {{ vm_ip }}; propietario {{ completed.result.owner }}. No se uso una ISO de instalacion.

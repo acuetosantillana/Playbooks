@@ -93,7 +93,7 @@
       - '{{ rocky_source_size.result.bytes }}'
     delegate_to: localhost
     changed_when: false
-    when: accion == 'crear_base' and vm_os == 'Rocky'
+    when: accion == 'crear_base' and vm_os == 'Rocky' and rocky_automatic_iso | bool
   - name: Preparar bibliotecas de ISO en el espacio temporal del runner
     ansible.builtin.command:
       argv:
@@ -263,7 +263,7 @@
           IsoPath: '{{ hv_iso_path }}'
           DiskBytes: '{{ (disk_gb | int) * 1073741824 }}'
           ReserveBytes: '{{ (reserve_gb | int) * 1073741824 }}'
-          IsoCopies: '{{ 3 if vm_os == ''Windows'' and windows_automatic_boot | bool else 2 if vm_os == ''Rocky'' else 1 }}'
+          IsoCopies: '{{ 3 if vm_os == ''Windows'' and windows_automatic_boot | bool else 2 if (vm_os == ''Rocky'' and rocky_automatic_iso | bool) else 1 }}'
           OscdimgPath: '{{ oscdimg_path }}'
         sensitive_parameters: '{{ [{''name'': ''NasCredential'', ''username'': nas_user, ''password'': nas_pass}] if nas_user | length > 0 else
           [] }}'
@@ -318,7 +318,7 @@
       register: windows_no_prompt
       when: vm_os == 'Windows' and windows_automatic_boot | bool
     - name: Preparar ISO Rocky que selecciona Install sin teclado
-      when: vm_os == 'Rocky'
+      when: vm_os == 'Rocky' and rocky_automatic_iso | bool
       block:
       - name: Crear espacio privado temporal en el runner
         ansible.builtin.tempfile:
@@ -390,7 +390,7 @@
           DiskBytes: '{{ (disk_gb | int) * 1073741824 }}'
           CpuCount: '{{ cpu | int }}'
           OsIsoPath: '{{ windows_no_prompt.result.iso if vm_os == ''Windows'' and windows_automatic_boot | bool else rocky_no_prompt.result.iso
-            if vm_os == ''Rocky'' else deployment.result.os_iso }}'
+            if (vm_os == ''Rocky'' and rocky_automatic_iso | bool) else deployment.result.os_iso }}'
           VlanId: '{{ vm_vlan | int }}'
       register: created_vm
   - name: Recuperar la base instalada sin reinstalar
