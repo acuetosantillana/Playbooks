@@ -97,8 +97,17 @@ if ($manifest.system -eq 'Windows') {
     [IO.File]::WriteAllText((Join-Path $seed 'network-config'),($network | ConvertTo-Json -Depth 10),$utf8)
     if ($RenderOnly) { return }
     $seedIso=Join-Path $Root 'Media\answers.iso'
-    & $OscdimgPath '-n' '-m' '-lCIDATA' $seed $seedIso | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear el medio cloud-init.' }
+    # Oscdimg escribe progreso en stderr incluso al terminar bien; redirigir a
+    # archivos evita NativeCommandError con WinRM/error_action=stop.
+    $stdout=Join-Path $Root 'Media\oscdimg-seed.stdout.log'
+    $stderr=Join-Path $Root 'Media\oscdimg-seed.stderr.log'
+    $arguments=@('-n','-m','-lCIDATA',('"'+$seed+'"'),('"'+$seedIso+'"'))
+    $process=Start-Process -FilePath $OscdimgPath -ArgumentList $arguments -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+    if ($process.ExitCode -ne 0) {
+        $details=@(Get-Content -LiteralPath $stdout,$stderr -ErrorAction SilentlyContinue | Select-Object -Last 20) -join [Environment]::NewLine
+        throw "Oscdimg fallo con codigo $($process.ExitCode) al crear el medio cloud-init. $details"
+    }
+    if (-not (Test-Path -LiteralPath $seedIso -PathType Leaf) -or (Get-Item -LiteralPath $seedIso).Length -eq 0) { throw 'No se pudo crear el medio cloud-init.' }
     $acl=Get-Acl -LiteralPath $seedIso
     $acl.SetAccessRuleProtection($true,$false)
     foreach ($sid in @('S-1-5-18','S-1-5-32-544',[Security.Principal.WindowsIdentity]::GetCurrent().User.Value)) { $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),'FullControl','Allow')) }
