@@ -24,7 +24,7 @@
     ansible.builtin.set_fact:
       hyperv_host: '{{ inventory_hostname }}'
       vm_name: '{{ nombre_vm | default(''TPL-WS2025'' if vm_os == ''Windows'' else ''TPL-ROCKY9'', true) }}'
-      template_id: '{{ ''ws2025-base-v1'' if vm_os == ''Windows'' else ''rocky9-base-v1'' }}'
+      template_id: '{{ plantilla_version | default(''ws2025-base-v1'' if vm_os == ''Windows'' else ''rocky9-base-v2'', true) }}'
       vm_ip: '{{ direccion_ip | default(base_install_ip, true) }}'
       vm_vlan: '{{ base_install_vlan }}'
       vm_mask: 24

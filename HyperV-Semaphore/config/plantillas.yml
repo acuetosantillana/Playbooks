@@ -12,3 +12,6 @@ template_catalog:
   rocky9-base-v1:
     system: Rocky
     description: Rocky Linux 9 - base minima con cloud-init
+  rocky9-base-v2:
+    system: Rocky
+    description: Rocky Linux 9 - cloud-init, desarrollo, nginx y Docker CE (KS completo)
