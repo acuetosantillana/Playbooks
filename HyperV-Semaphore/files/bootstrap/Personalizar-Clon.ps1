@@ -66,8 +66,13 @@ if ($manifest.system -eq 'Windows') {
         [IO.File]::WriteAllText((Join-Path $guestFolder 'Customize.ps1'),$bootstrap,$utf8)
         # La identidad se escribe offline: la verificacion no depende de que Customize.ps1 termine sin errores.
         [IO.File]::WriteAllText((Join-Path $guestFolder 'instance.json'),($instance | ConvertTo-Json -Compress),$utf8)
-        $answerFile=Join-Path $drive 'Windows\Panther\Unattend.xml'
-        [IO.File]::WriteAllText($answerFile,$xml,$utf8)
+        # Panther es cache de Setup y el primer arranque tras sysprep puede ignorarlo.
+        # Limpiar cualquier cache y escribir en las ubicaciones que Setup si consulta.
+        $panther=Join-Path $drive 'Windows\Panther'
+        Remove-Item -LiteralPath (Join-Path $panther 'Unattend.xml') -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $panther 'Unattend') -Recurse -Force -ErrorAction SilentlyContinue
+        [IO.File]::WriteAllText((Join-Path $drive 'Windows\System32\Sysprep\Unattend.xml'),$xml,$utf8)
+        [IO.File]::WriteAllText((Join-Path $drive 'Unattend.xml'),$xml,$utf8)
     } finally { if ($mounted) { Dismount-VHD -Path $manifest.disk } }
 } else {
     if (-not $RootHash -or -not $UserHash) { throw 'Faltan hashes de contrasena para Rocky.' }
