@@ -8,7 +8,11 @@ $Ansible.Changed = $false
 Import-Module Hyper-V
 Import-Module FailoverClusters
 $resolvedRoot = [IO.Path]::GetFullPath($Root).TrimEnd('\')
-$expectedRoots = @($CsvVolumes | ForEach-Object { [IO.Path]::GetFullPath((Join-Path (Join-Path $_ 'SemaphoreVMs') $VmName)).TrimEnd('\') })
+# Bases: <Volumen>\SemaphoreVMs\<NombreVM>. Clones: <Volumen>\<NombreVM> (raiz del volumen).
+$expectedRoots = @($CsvVolumes | ForEach-Object {
+    [IO.Path]::GetFullPath((Join-Path (Join-Path $_ 'SemaphoreVMs') $VmName)).TrimEnd('\')
+    [IO.Path]::GetFullPath((Join-Path $_ $VmName)).TrimEnd('\')
+})
 if ($resolvedRoot -notin $expectedRoots) { throw 'Root no coincide con una carpeta de despliegue autorizada.' }
 $manifest = Get-Content -LiteralPath (Join-Path $resolvedRoot 'deployment.json') -Raw | ConvertFrom-Json
 if ($manifest.name -ne $VmName -or $manifest.root.TrimEnd('\') -ne $resolvedRoot) { throw 'Manifiesto de despliegue invalido.' }

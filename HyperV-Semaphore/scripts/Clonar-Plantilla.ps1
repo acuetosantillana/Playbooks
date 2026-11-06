@@ -41,16 +41,16 @@ foreach ($csv in Get-ClusterSharedVolume | Where-Object State -eq 'Online') {
     foreach ($volume in $csv.SharedVolumeInfo) {
         $path=$volume.FriendlyVolumeName.TrimEnd('\')
         if ($path -in $CsvVolumes) {
-            if (Test-Path -LiteralPath (Join-Path (Join-Path $path 'SemaphoreVMs') $VmName)) { throw 'Ya existe una carpeta de despliegue con ese nombre.' }
+            if (Test-Path -LiteralPath (Join-Path $path $VmName)) { throw 'Ya existe una carpeta de despliegue con ese nombre.' }
+            if (Test-Path -LiteralPath (Join-Path (Join-Path $path 'SemaphoreVMs') $VmName)) { throw 'Ya existe una carpeta de despliegue anterior con ese nombre.' }
             if ($volume.Partition.FreeSpace -ge $DiskBytes+$ReserveBytes) { $candidates+=[pscustomobject]@{Path=$path;Free=$volume.Partition.FreeSpace} }
         }
     }
 }
 $selected=$candidates | Sort-Object Free -Descending | Select-Object -First 1
 if (-not $selected) { throw 'No hay espacio suficiente en los CSV permitidos.' }
-$root=Join-Path (Join-Path $selected.Path 'SemaphoreVMs') $VmName
-$parent=Split-Path -Parent $root
-if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+# Los clones viven en la raiz del volumen elegido: <Volumen>\<NombreVM>
+$root=Join-Path $selected.Path $VmName
 New-Item -ItemType Directory -Path $root -ErrorAction Stop | Out-Null
 $stage=Join-Path $root 'Provisioning'
 $media=Join-Path $root 'Media'
