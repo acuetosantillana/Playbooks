@@ -336,6 +336,20 @@
     - name: Esperar que cloud-init finalice sin errores
       ansible.builtin.command: cloud-init status --wait
       changed_when: false
+      register: cloud_init_status
+      failed_when: false
+      when: expected_system == 'Rocky'
+    - name: Tolerar solo la carrera conocida de la NIC de Hyper-V en init-local
+      ansible.builtin.command: cloud-init status --long
+      changed_when: false
+      register: cloud_init_detail
+      failed_when: cloud_init_status.rc != 0 and ('Not all expected physical devices present' not in cloud_init_detail.stdout)
+      when: expected_system == 'Rocky'
+    - name: Confirmar que la IP solicitada quedo aplicada en el invitado
+      ansible.builtin.command: ip -4 -o addr show
+      changed_when: false
+      register: guest_addresses
+      failed_when: expected_vm_ip not in guest_addresses.stdout
       when: expected_system == 'Rocky'
     - name: Leer identidad nueva de Rocky
       ansible.builtin.command: cat /etc/semaphore-instance.json
