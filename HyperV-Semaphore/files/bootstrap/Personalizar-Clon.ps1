@@ -86,7 +86,13 @@ if ($manifest.system -eq 'Windows') {
     $cloud=@{
         hostname=$cfg.vm_name; manage_etc_hosts=$true; ssh_pwauth=$true; disable_root=$true;
         users=@(@{name=$cfg.linux_user;groups='wheel';sudo='ALL=(ALL) ALL';lock_passwd=$false;hashed_passwd=$userPassword;shell='/bin/bash'});
-        runcmd=@(,@('sh','-c',('getent group docker >/dev/null 2>&1 && usermod -aG docker '+$cfg.linux_user+' || true')));
+        # Respaldo de red: en Hyper-V la NIC sintetica puede registrarse despues de
+        # init-local y cloud-init deja la interfaz sin configurar; al final del
+        # arranque la NIC ya existe y nmcli aplica la IP si sigue ausente.
+        runcmd=@(
+            ,@('sh','-c',('getent group docker >/dev/null 2>&1 && usermod -aG docker '+$cfg.linux_user+' || true'))
+            ,@('sh','-c',('ip -4 addr show dev eth0 2>/dev/null | grep -qw '+$cfg.vm_ip+' || (nmcli connection add type ethernet ifname eth0 con-name semaphore-net ipv4.method manual ipv4.addresses '+$cfg.vm_ip+'/'+$prefix+' ipv4.gateway '+$cfg.vm_gateway+' ipv4.dns "'+(($dns) -join ' ')+'" connection.autoconnect yes && nmcli connection up semaphore-net)'))
+        );
         chpasswd=@{expire=$false;users=@(@{name='root';password=$rootPassword;type='hash'})};
         write_files=@(@{path='/etc/semaphore-instance.json';permissions='0644';content=($instance | ConvertTo-Json -Compress)});
         final_message='Semaphore clone initialization finished'
