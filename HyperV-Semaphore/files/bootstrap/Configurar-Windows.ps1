@@ -4,7 +4,13 @@ $networkJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__NE
 $config = $networkJson | ConvertFrom-Json
 Start-Transcript -Path 'C:\netcfg.log' -Append | Out-Null
 try {
-    $adapters = @(Get-NetAdapter -Physical | Where-Object Status -eq 'Up')
+    # En el pase specialize del clon la red puede tardar en estar lista: esperar hasta 2 minutos.
+    $adapters = @()
+    for ($i = 0; $i -lt 12; $i++) {
+        $adapters = @(Get-NetAdapter -Physical | Where-Object Status -eq 'Up')
+        if ($adapters.Count -eq 1) { break }
+        Start-Sleep -Seconds 10
+    }
     if ($adapters.Count -ne 1) { throw 'Se requiere exactamente un adaptador conectado durante la instalacion.' }
     $index = $adapters[0].ifIndex
     Set-NetIPInterface -InterfaceIndex $index -AddressFamily IPv4 -Dhcp Disabled

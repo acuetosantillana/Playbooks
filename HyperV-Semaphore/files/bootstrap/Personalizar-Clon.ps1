@@ -64,6 +64,8 @@ if ($manifest.system -eq 'Windows') {
         $guestFolder=Join-Path $drive 'ProgramData\Semaphore'
         New-Item -ItemType Directory -Path $guestFolder -Force | Out-Null
         [IO.File]::WriteAllText((Join-Path $guestFolder 'Customize.ps1'),$bootstrap,$utf8)
+        # La identidad se escribe offline: la verificacion no depende de que Customize.ps1 termine sin errores.
+        [IO.File]::WriteAllText((Join-Path $guestFolder 'instance.json'),($instance | ConvertTo-Json -Compress),$utf8)
         $answerFile=Join-Path $drive 'Windows\Panther\Unattend.xml'
         [IO.File]::WriteAllText($answerFile,$xml,$utf8)
     } finally { if ($mounted) { Dismount-VHD -Path $manifest.disk } }
