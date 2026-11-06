@@ -18,6 +18,13 @@ if ($group.OwnerNode.Name -ne $env:COMPUTERNAME) { throw ('La VM pertenece al no
 $vm=Get-VM -Id ([guid]$manifest.vm_id)
 if ($vm.State -ne 'Running') { throw 'La VM no esta encendida.' }
 $instanceJson=(@{instance_id=$manifest.instance_id;vm_name=$manifest.name;template=$manifest.template} | ConvertTo-Json -Compress)
+# Evaluar los argumentos en variables simples: dentro de -ArgumentList las
+# expresiones con cast y acceso a miembro se enlazan mal.
+$targetIp=[string]$cfg.vm_ip
+$targetPrefix=[int]$cfg.vm_mask
+$targetGateway=[string]$cfg.vm_gateway
+$targetDns=@(@($cfg.vm_dns1,$cfg.vm_dns2) | Where-Object {$_} | ForEach-Object {[string]$_})
+$targetRdp=if ($cfg.rdp_port) { [int]$cfg.rdp_port } else { $null }
 $cred=[pscredential]::new($AdminUser,$AdminPassword)
 $deadline=[DateTime]::UtcNow.AddMinutes($TimeoutMinutes)
 $session=$null
@@ -97,7 +104,7 @@ try {
             $log+='instance.json escrito.'
         }
         @{log=$log;computer=$env:COMPUTERNAME;ip=$state.IPAddress;prefix=$state.PrefixLength;address_state=[string]$state.AddressState}
-    } -ArgumentList $cfg.vm_ip,[int]$cfg.vm_mask,$cfg.vm_gateway,@(@($cfg.vm_dns1,$cfg.vm_dns2) | Where-Object {$_}),$cfg.rdp_port,$instanceJson
+    } -ArgumentList $targetIp,$targetPrefix,$targetGateway,$targetDns,$targetRdp,$instanceJson
 } finally { Remove-PSSession -Session $session }
 $Ansible.Changed=$true
 $Ansible.Result=@{name=$manifest.name;ip=$result.ip;prefix=$result.prefix;address_state=$result.address_state;guest=$result.computer;log=@($result.log)}
