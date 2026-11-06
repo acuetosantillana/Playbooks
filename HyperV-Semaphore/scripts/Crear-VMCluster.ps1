@@ -76,5 +76,26 @@ do {
     Start-Sleep -Seconds 2
 } while ([DateTime]::UtcNow -lt $deadline)
 if ($group.State -ne 'Online') { throw 'Timeout al iniciar el recurso de cluster.' }
-$Ansible.Result = @{ name=$VmName; vm_id=$vm.Id.ToString(); owner=$group.OwnerNode.Name; root=$Root; state=$group.State.ToString() }
+$grubKeysSent = $false
+if ($Sistema -eq 'Rocky') {
+    # Seleccionar "Install Rocky Linux 9" en GRUB sin esperar el timeout de 60 s:
+    # el host manda Arriba+Enter a la consola. Si la tecla no llega a tiempo,
+    # el timeout de GRUB arranca igual la opcion por defecto (test & install).
+    try {
+        $ownerNode = $group.OwnerNode.Name
+        $cim = New-CimSession -ComputerName $ownerNode -ErrorAction Stop
+        $vmCs = Get-CimInstance -CimSession $cim -Namespace root\virtualization\v2 -ClassName Msvm_ComputerSystem -Filter "ElementName='$VmName'"
+        $keyboard = Get-CimAssociatedInstance -CimSession $cim -InputObject $vmCs -ResultClassName Msvm_Keyboard
+        foreach ($delay in @(15, 10)) {
+            Start-Sleep -Seconds $delay
+            # VK_UP=38 resalta "Install"; VK_RETURN=13 arranca. Repetido por si GRUB aun no estaba.
+            [void](Invoke-CimMethod -CimSession $cim -InputObject $keyboard -MethodName TypeKey -Arguments @{keyCode=[uint32]38})
+            Start-Sleep -Milliseconds 500
+            [void](Invoke-CimMethod -CimSession $cim -InputObject $keyboard -MethodName TypeKey -Arguments @{keyCode=[uint32]13})
+        }
+        Remove-CimSession -CimSession $cim
+        $grubKeysSent = $true
+    } catch { $grubKeysSent = $false }
+}
+$Ansible.Result = @{ name=$VmName; vm_id=$vm.Id.ToString(); owner=$group.OwnerNode.Name; root=$Root; state=$group.State.ToString(); grub_keys_sent=$grubKeysSent }
 $Ansible.Changed = $true
