@@ -46,7 +46,7 @@ if ($PreparationRoot) {
     foreach ($item in $items) {
         $relative=$item.FullName.Substring($archivePreparation.Length+1)
         # Solo el estado anterior a generar respuestas o crear discos/VM.
-        if ($relative -notmatch '^(Media|Provisioning)$|^Provisioning\\windows-media(?:\\.*)?$|^Provisioning\\(?:Configurar-Windows\.ps1|Generar-Respuestas\.ps1|Personalizar-Clon\.ps1|rocky9(?:-base)?\.ks\.tpl|vm\.json|fuentes-originales(?:\\windows-original\.xml\.j2)?)$|^Media\\(?:os\.iso|os-uefi-auto\.iso(?:\.partial)?|os-uefi-auto\.json|oscdimg-uefi\.(?:stdout|stderr)\.log)$') { throw "Hay recursos fuera de la preparacion de ISO: $relative" }
+        if ($relative -notmatch '^(Media|Provisioning)$|^Provisioning\\windows-media(?:\\.*)?$|^Provisioning\\answers(?:\\.*)?$|^Provisioning\\(?:Configurar-Windows\.ps1|Generar-Respuestas\.ps1|Personalizar-Clon\.ps1|rocky9(?:-base)?\.ks\.tpl|rocky-auto\.iso(?:\.partial)?|vm\.json|fuentes-originales(?:\\windows-original\.xml\.j2)?)$|^Media\\(?:os\.iso|os-uefi-auto\.iso(?:\.partial)?|os-uefi-auto\.json|oscdimg-uefi\.(?:stdout|stderr)\.log)$') { throw "Hay recursos fuera de la preparacion de ISO: $relative" }
     }
     $sourceImage=Join-Path $archivePreparation 'Media\os.iso'
     if ((Get-DiskImage -ImagePath $sourceImage -ErrorAction Stop).Attached) { throw 'La ISO sigue montada; no se mueve.' }
