@@ -756,6 +756,23 @@
         error_action: stop
         parameters:
           Root: '{{ deployment.result.root }}'
+    - name: Configurar la red del clon Windows por PowerShell Direct desde el host
+      ansible.windows.win_powershell:
+        path: '{{ playbook_dir }}/../scripts/Configurar-RedClon.ps1'
+        error_action: stop
+        parameters:
+          Root: '{{ deployment.result.root }}'
+          AdminUser: '{{ windows_admin_user }}'
+          TimeoutMinutes: 20
+        sensitive_parameters:
+        - name: AdminPassword
+          value: '{{ admin_password }}'
+      when: vm_os == 'Windows'
+      register: clone_network
+    - name: Mostrar estado de red aplicado al clon Windows
+      ansible.builtin.debug:
+        var: clone_network.result
+      when: vm_os == 'Windows'
     - name: Crear archivo de huellas SSH exclusivo de esta tarea
       ansible.builtin.tempfile:
         state: file
